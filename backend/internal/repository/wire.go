@@ -7,6 +7,7 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
@@ -127,6 +128,10 @@ var ProviderSet = wire.NewSet(
 	NewErrorPassthroughCache,
 	NewTLSFingerprintProfileCache,
 	NewContentModerationHashCache,
+
+	// Plugin runtime state store (DB + Redis Pub/Sub)
+	NewPluginStateStore,
+	wire.Bind(new(pluginkit.StateStore), new(*PluginStateStore)),
 
 	// Encryptors
 	NewAESEncryptor,

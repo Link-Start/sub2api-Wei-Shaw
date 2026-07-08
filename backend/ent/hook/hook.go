@@ -273,6 +273,18 @@ func (f PendingAuthSessionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PendingAuthSessionMutation", m)
 }
 
+// The PluginStateFunc type is an adapter to allow the use of ordinary
+// function as PluginState mutator.
+type PluginStateFunc func(context.Context, *ent.PluginStateMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f PluginStateFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.PluginStateMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PluginStateMutation", m)
+}
+
 // The PromoCodeFunc type is an adapter to allow the use of ordinary
 // function as PromoCode mutator.
 type PromoCodeFunc func(context.Context, *ent.PromoCodeMutation) (ent.Value, error)

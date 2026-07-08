@@ -37,6 +37,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
+	"github.com/Wei-Shaw/sub2api/ent/pluginstate"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
@@ -106,6 +107,8 @@ type Client struct {
 	PaymentProviderInstance *PaymentProviderInstanceClient
 	// PendingAuthSession is the client for interacting with the PendingAuthSession builders.
 	PendingAuthSession *PendingAuthSessionClient
+	// PluginState is the client for interacting with the PluginState builders.
+	PluginState *PluginStateClient
 	// PromoCode is the client for interacting with the PromoCode builders.
 	PromoCode *PromoCodeClient
 	// PromoCodeUsage is the client for interacting with the PromoCodeUsage builders.
@@ -171,6 +174,7 @@ func (c *Client) init() {
 	c.PaymentOrder = NewPaymentOrderClient(c.config)
 	c.PaymentProviderInstance = NewPaymentProviderInstanceClient(c.config)
 	c.PendingAuthSession = NewPendingAuthSessionClient(c.config)
+	c.PluginState = NewPluginStateClient(c.config)
 	c.PromoCode = NewPromoCodeClient(c.config)
 	c.PromoCodeUsage = NewPromoCodeUsageClient(c.config)
 	c.Proxy = NewProxyClient(c.config)
@@ -301,6 +305,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		PaymentOrder:                  NewPaymentOrderClient(cfg),
 		PaymentProviderInstance:       NewPaymentProviderInstanceClient(cfg),
 		PendingAuthSession:            NewPendingAuthSessionClient(cfg),
+		PluginState:                   NewPluginStateClient(cfg),
 		PromoCode:                     NewPromoCodeClient(cfg),
 		PromoCodeUsage:                NewPromoCodeUsageClient(cfg),
 		Proxy:                         NewProxyClient(cfg),
@@ -358,6 +363,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		PaymentOrder:                  NewPaymentOrderClient(cfg),
 		PaymentProviderInstance:       NewPaymentProviderInstanceClient(cfg),
 		PendingAuthSession:            NewPendingAuthSessionClient(cfg),
+		PluginState:                   NewPluginStateClient(cfg),
 		PromoCode:                     NewPromoCodeClient(cfg),
 		PromoCodeUsage:                NewPromoCodeUsageClient(cfg),
 		Proxy:                         NewProxyClient(cfg),
@@ -409,10 +415,10 @@ func (c *Client) Use(hooks ...Hook) {
 		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
 		c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
 		c.IdentityAdoptionDecision, c.PaymentAuditLog, c.PaymentOrder,
-		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
-		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
-		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
-		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
+		c.PaymentProviderInstance, c.PendingAuthSession, c.PluginState, c.PromoCode,
+		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
+		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
+		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
 		c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Use(hooks...)
@@ -429,10 +435,10 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
 		c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
 		c.IdentityAdoptionDecision, c.PaymentAuditLog, c.PaymentOrder,
-		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
-		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
-		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
-		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
+		c.PaymentProviderInstance, c.PendingAuthSession, c.PluginState, c.PromoCode,
+		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
+		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
+		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
 		c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Intercept(interceptors...)
@@ -486,6 +492,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.PaymentProviderInstance.mutate(ctx, m)
 	case *PendingAuthSessionMutation:
 		return c.PendingAuthSession.mutate(ctx, m)
+	case *PluginStateMutation:
+		return c.PluginState.mutate(ctx, m)
 	case *PromoCodeMutation:
 		return c.PromoCode.mutate(ctx, m)
 	case *PromoCodeUsageMutation:
@@ -3998,6 +4006,139 @@ func (c *PendingAuthSessionClient) mutate(ctx context.Context, m *PendingAuthSes
 	}
 }
 
+// PluginStateClient is a client for the PluginState schema.
+type PluginStateClient struct {
+	config
+}
+
+// NewPluginStateClient returns a client for the PluginState from the given config.
+func NewPluginStateClient(c config) *PluginStateClient {
+	return &PluginStateClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `pluginstate.Hooks(f(g(h())))`.
+func (c *PluginStateClient) Use(hooks ...Hook) {
+	c.hooks.PluginState = append(c.hooks.PluginState, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `pluginstate.Intercept(f(g(h())))`.
+func (c *PluginStateClient) Intercept(interceptors ...Interceptor) {
+	c.inters.PluginState = append(c.inters.PluginState, interceptors...)
+}
+
+// Create returns a builder for creating a PluginState entity.
+func (c *PluginStateClient) Create() *PluginStateCreate {
+	mutation := newPluginStateMutation(c.config, OpCreate)
+	return &PluginStateCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of PluginState entities.
+func (c *PluginStateClient) CreateBulk(builders ...*PluginStateCreate) *PluginStateCreateBulk {
+	return &PluginStateCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *PluginStateClient) MapCreateBulk(slice any, setFunc func(*PluginStateCreate, int)) *PluginStateCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &PluginStateCreateBulk{err: fmt.Errorf("calling to PluginStateClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*PluginStateCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &PluginStateCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for PluginState.
+func (c *PluginStateClient) Update() *PluginStateUpdate {
+	mutation := newPluginStateMutation(c.config, OpUpdate)
+	return &PluginStateUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *PluginStateClient) UpdateOne(_m *PluginState) *PluginStateUpdateOne {
+	mutation := newPluginStateMutation(c.config, OpUpdateOne, withPluginState(_m))
+	return &PluginStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *PluginStateClient) UpdateOneID(id string) *PluginStateUpdateOne {
+	mutation := newPluginStateMutation(c.config, OpUpdateOne, withPluginStateID(id))
+	return &PluginStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for PluginState.
+func (c *PluginStateClient) Delete() *PluginStateDelete {
+	mutation := newPluginStateMutation(c.config, OpDelete)
+	return &PluginStateDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *PluginStateClient) DeleteOne(_m *PluginState) *PluginStateDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *PluginStateClient) DeleteOneID(id string) *PluginStateDeleteOne {
+	builder := c.Delete().Where(pluginstate.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &PluginStateDeleteOne{builder}
+}
+
+// Query returns a query builder for PluginState.
+func (c *PluginStateClient) Query() *PluginStateQuery {
+	return &PluginStateQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypePluginState},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a PluginState entity by its id.
+func (c *PluginStateClient) Get(ctx context.Context, id string) (*PluginState, error) {
+	return c.Query().Where(pluginstate.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *PluginStateClient) GetX(ctx context.Context, id string) *PluginState {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *PluginStateClient) Hooks() []Hook {
+	return c.hooks.PluginState
+}
+
+// Interceptors returns the client interceptors.
+func (c *PluginStateClient) Interceptors() []Interceptor {
+	return c.inters.PluginState
+}
+
+func (c *PluginStateClient) mutate(ctx context.Context, m *PluginStateMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&PluginStateCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&PluginStateUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&PluginStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&PluginStateDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown PluginState mutation op: %q", m.Op())
+	}
+}
+
 // PromoCodeClient is a client for the PromoCode schema.
 type PromoCodeClient struct {
 	config
@@ -6671,10 +6812,11 @@ type (
 		ChannelMonitor, ChannelMonitorDailyRollup, ChannelMonitorHistory,
 		ChannelMonitorRequestTemplate, ErrorPassthroughRule, Group, IdempotencyRecord,
 		IdentityAdoptionDecision, PaymentAuditLog, PaymentOrder,
-		PaymentProviderInstance, PendingAuthSession, PromoCode, PromoCodeUsage, Proxy,
-		RedeemCode, SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
-		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
-		UserAttributeValue, UserPlatformQuota, UserSubscription []ent.Hook
+		PaymentProviderInstance, PendingAuthSession, PluginState, PromoCode,
+		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
+		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
+		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
+		UserSubscription []ent.Hook
 	}
 	inters struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
@@ -6682,10 +6824,11 @@ type (
 		ChannelMonitor, ChannelMonitorDailyRollup, ChannelMonitorHistory,
 		ChannelMonitorRequestTemplate, ErrorPassthroughRule, Group, IdempotencyRecord,
 		IdentityAdoptionDecision, PaymentAuditLog, PaymentOrder,
-		PaymentProviderInstance, PendingAuthSession, PromoCode, PromoCodeUsage, Proxy,
-		RedeemCode, SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
-		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
-		UserAttributeValue, UserPlatformQuota, UserSubscription []ent.Interceptor
+		PaymentProviderInstance, PendingAuthSession, PluginState, PromoCode,
+		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
+		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
+		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
+		UserSubscription []ent.Interceptor
 	}
 )
 

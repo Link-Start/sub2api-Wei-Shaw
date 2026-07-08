@@ -23,6 +23,7 @@ require (
 	github.com/imroc/req/v3 v3.57.0
 	github.com/klauspost/compress v1.18.2
 	github.com/lib/pq v1.10.9
+	github.com/mitchellh/mapstructure v1.5.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pquerna/otp v1.5.0
 	github.com/redis/go-redis/v9 v9.17.2
@@ -121,7 +122,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mdelapenya/tlscert v0.2.0 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
-	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.1.0 // indirect
 	github.com/moby/patternmatcher v0.6.0 // indirect

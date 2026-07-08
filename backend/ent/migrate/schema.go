@@ -1219,6 +1219,19 @@ var (
 			},
 		},
 	}
+	// PluginStatesColumns holds the columns for the "plugin_states" table.
+	PluginStatesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Size: 64},
+		{Name: "enabled", Type: field.TypeBool, Default: false},
+		{Name: "updated_by", Type: field.TypeString, Default: ""},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+	}
+	// PluginStatesTable holds the schema information for the "plugin_states" table.
+	PluginStatesTable = &schema.Table{
+		Name:       "plugin_states",
+		Columns:    PluginStatesColumns,
+		PrimaryKey: []*schema.Column{PluginStatesColumns[0]},
+	}
 	// PromoCodesColumns holds the columns for the "promo_codes" table.
 	PromoCodesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -2000,6 +2013,7 @@ var (
 		PaymentOrdersTable,
 		PaymentProviderInstancesTable,
 		PendingAuthSessionsTable,
+		PluginStatesTable,
 		PromoCodesTable,
 		PromoCodeUsagesTable,
 		ProxiesTable,
@@ -2102,6 +2116,9 @@ func init() {
 	PendingAuthSessionsTable.ForeignKeys[0].RefTable = UsersTable
 	PendingAuthSessionsTable.Annotation = &entsql.Annotation{
 		Table: "pending_auth_sessions",
+	}
+	PluginStatesTable.Annotation = &entsql.Annotation{
+		Table: "plugin_states",
 	}
 	PromoCodesTable.Annotation = &entsql.Annotation{
 		Table: "promo_codes",

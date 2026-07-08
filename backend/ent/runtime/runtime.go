@@ -27,6 +27,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
+	"github.com/Wei-Shaw/sub2api/ent/pluginstate"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
@@ -1428,6 +1429,40 @@ func init() {
 	pendingauthsessionDescCompletionCodeHash := pendingauthsessionFields[12].Descriptor()
 	// pendingauthsession.DefaultCompletionCodeHash holds the default value on creation for the completion_code_hash field.
 	pendingauthsession.DefaultCompletionCodeHash = pendingauthsessionDescCompletionCodeHash.Default.(string)
+	pluginstateFields := schema.PluginState{}.Fields()
+	_ = pluginstateFields
+	// pluginstateDescEnabled is the schema descriptor for enabled field.
+	pluginstateDescEnabled := pluginstateFields[1].Descriptor()
+	// pluginstate.DefaultEnabled holds the default value on creation for the enabled field.
+	pluginstate.DefaultEnabled = pluginstateDescEnabled.Default.(bool)
+	// pluginstateDescUpdatedBy is the schema descriptor for updated_by field.
+	pluginstateDescUpdatedBy := pluginstateFields[2].Descriptor()
+	// pluginstate.DefaultUpdatedBy holds the default value on creation for the updated_by field.
+	pluginstate.DefaultUpdatedBy = pluginstateDescUpdatedBy.Default.(string)
+	// pluginstateDescUpdatedAt is the schema descriptor for updated_at field.
+	pluginstateDescUpdatedAt := pluginstateFields[3].Descriptor()
+	// pluginstate.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	pluginstate.DefaultUpdatedAt = pluginstateDescUpdatedAt.Default.(func() time.Time)
+	// pluginstate.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	pluginstate.UpdateDefaultUpdatedAt = pluginstateDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// pluginstateDescID is the schema descriptor for id field.
+	pluginstateDescID := pluginstateFields[0].Descriptor()
+	// pluginstate.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	pluginstate.IDValidator = func() func(string) error {
+		validators := pluginstateDescID.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(id string) error {
+			for _, fn := range fns {
+				if err := fn(id); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
 	promocodeFields := schema.PromoCode{}.Fields()
 	_ = promocodeFields
 	// promocodeDescCode is the schema descriptor for code field.
