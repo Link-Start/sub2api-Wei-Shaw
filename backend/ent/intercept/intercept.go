@@ -30,6 +30,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
+	"github.com/Wei-Shaw/sub2api/ent/plugininstallation"
+	"github.com/Wei-Shaw/sub2api/ent/pluginkv"
 	"github.com/Wei-Shaw/sub2api/ent/pluginstate"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
@@ -700,6 +702,60 @@ func (f TraversePendingAuthSession) Traverse(ctx context.Context, q ent.Query) e
 	return fmt.Errorf("unexpected query type %T. expect *ent.PendingAuthSessionQuery", q)
 }
 
+// The PluginInstallationFunc type is an adapter to allow the use of ordinary function as a Querier.
+type PluginInstallationFunc func(context.Context, *ent.PluginInstallationQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f PluginInstallationFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.PluginInstallationQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.PluginInstallationQuery", q)
+}
+
+// The TraversePluginInstallation type is an adapter to allow the use of ordinary function as Traverser.
+type TraversePluginInstallation func(context.Context, *ent.PluginInstallationQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraversePluginInstallation) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraversePluginInstallation) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.PluginInstallationQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.PluginInstallationQuery", q)
+}
+
+// The PluginKVFunc type is an adapter to allow the use of ordinary function as a Querier.
+type PluginKVFunc func(context.Context, *ent.PluginKVQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f PluginKVFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.PluginKVQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.PluginKVQuery", q)
+}
+
+// The TraversePluginKV type is an adapter to allow the use of ordinary function as Traverser.
+type TraversePluginKV func(context.Context, *ent.PluginKVQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraversePluginKV) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraversePluginKV) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.PluginKVQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.PluginKVQuery", q)
+}
+
 // The PluginStateFunc type is an adapter to allow the use of ordinary function as a Querier.
 type PluginStateFunc func(context.Context, *ent.PluginStateQuery) (ent.Value, error)
 
@@ -1206,6 +1262,10 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.PaymentProviderInstanceQuery, predicate.PaymentProviderInstance, paymentproviderinstance.OrderOption]{typ: ent.TypePaymentProviderInstance, tq: q}, nil
 	case *ent.PendingAuthSessionQuery:
 		return &query[*ent.PendingAuthSessionQuery, predicate.PendingAuthSession, pendingauthsession.OrderOption]{typ: ent.TypePendingAuthSession, tq: q}, nil
+	case *ent.PluginInstallationQuery:
+		return &query[*ent.PluginInstallationQuery, predicate.PluginInstallation, plugininstallation.OrderOption]{typ: ent.TypePluginInstallation, tq: q}, nil
+	case *ent.PluginKVQuery:
+		return &query[*ent.PluginKVQuery, predicate.PluginKV, pluginkv.OrderOption]{typ: ent.TypePluginKV, tq: q}, nil
 	case *ent.PluginStateQuery:
 		return &query[*ent.PluginStateQuery, predicate.PluginState, pluginstate.OrderOption]{typ: ent.TypePluginState, tq: q}, nil
 	case *ent.PromoCodeQuery:

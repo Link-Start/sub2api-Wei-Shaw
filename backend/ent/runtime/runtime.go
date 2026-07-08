@@ -27,6 +27,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
+	"github.com/Wei-Shaw/sub2api/ent/plugininstallation"
+	"github.com/Wei-Shaw/sub2api/ent/pluginkv"
 	"github.com/Wei-Shaw/sub2api/ent/pluginstate"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
@@ -1429,6 +1431,128 @@ func init() {
 	pendingauthsessionDescCompletionCodeHash := pendingauthsessionFields[12].Descriptor()
 	// pendingauthsession.DefaultCompletionCodeHash holds the default value on creation for the completion_code_hash field.
 	pendingauthsession.DefaultCompletionCodeHash = pendingauthsessionDescCompletionCodeHash.Default.(string)
+	plugininstallationFields := schema.PluginInstallation{}.Fields()
+	_ = plugininstallationFields
+	// plugininstallationDescVersion is the schema descriptor for version field.
+	plugininstallationDescVersion := plugininstallationFields[1].Descriptor()
+	// plugininstallation.VersionValidator is a validator for the "version" field. It is called by the builders before save.
+	plugininstallation.VersionValidator = func() func(string) error {
+		validators := plugininstallationDescVersion.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(version string) error {
+			for _, fn := range fns {
+				if err := fn(version); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// plugininstallationDescInstallPath is the schema descriptor for install_path field.
+	plugininstallationDescInstallPath := plugininstallationFields[3].Descriptor()
+	// plugininstallation.InstallPathValidator is a validator for the "install_path" field. It is called by the builders before save.
+	plugininstallation.InstallPathValidator = plugininstallationDescInstallPath.Validators[0].(func(string) error)
+	// plugininstallationDescChecksum is the schema descriptor for checksum field.
+	plugininstallationDescChecksum := plugininstallationFields[4].Descriptor()
+	// plugininstallation.ChecksumValidator is a validator for the "checksum" field. It is called by the builders before save.
+	plugininstallation.ChecksumValidator = func() func(string) error {
+		validators := plugininstallationDescChecksum.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(checksum string) error {
+			for _, fn := range fns {
+				if err := fn(checksum); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// plugininstallationDescInstalledBy is the schema descriptor for installed_by field.
+	plugininstallationDescInstalledBy := plugininstallationFields[6].Descriptor()
+	// plugininstallation.DefaultInstalledBy holds the default value on creation for the installed_by field.
+	plugininstallation.DefaultInstalledBy = plugininstallationDescInstalledBy.Default.(string)
+	// plugininstallationDescInstalledAt is the schema descriptor for installed_at field.
+	plugininstallationDescInstalledAt := plugininstallationFields[7].Descriptor()
+	// plugininstallation.DefaultInstalledAt holds the default value on creation for the installed_at field.
+	plugininstallation.DefaultInstalledAt = plugininstallationDescInstalledAt.Default.(func() time.Time)
+	// plugininstallationDescUpdatedAt is the schema descriptor for updated_at field.
+	plugininstallationDescUpdatedAt := plugininstallationFields[8].Descriptor()
+	// plugininstallation.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	plugininstallation.DefaultUpdatedAt = plugininstallationDescUpdatedAt.Default.(func() time.Time)
+	// plugininstallation.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	plugininstallation.UpdateDefaultUpdatedAt = plugininstallationDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// plugininstallationDescID is the schema descriptor for id field.
+	plugininstallationDescID := plugininstallationFields[0].Descriptor()
+	// plugininstallation.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	plugininstallation.IDValidator = func() func(string) error {
+		validators := plugininstallationDescID.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(id string) error {
+			for _, fn := range fns {
+				if err := fn(id); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	pluginkvFields := schema.PluginKV{}.Fields()
+	_ = pluginkvFields
+	// pluginkvDescPluginID is the schema descriptor for plugin_id field.
+	pluginkvDescPluginID := pluginkvFields[0].Descriptor()
+	// pluginkv.PluginIDValidator is a validator for the "plugin_id" field. It is called by the builders before save.
+	pluginkv.PluginIDValidator = func() func(string) error {
+		validators := pluginkvDescPluginID.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(plugin_id string) error {
+			for _, fn := range fns {
+				if err := fn(plugin_id); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// pluginkvDescKey is the schema descriptor for key field.
+	pluginkvDescKey := pluginkvFields[1].Descriptor()
+	// pluginkv.KeyValidator is a validator for the "key" field. It is called by the builders before save.
+	pluginkv.KeyValidator = func() func(string) error {
+		validators := pluginkvDescKey.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(key string) error {
+			for _, fn := range fns {
+				if err := fn(key); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// pluginkvDescCreatedAt is the schema descriptor for created_at field.
+	pluginkvDescCreatedAt := pluginkvFields[3].Descriptor()
+	// pluginkv.DefaultCreatedAt holds the default value on creation for the created_at field.
+	pluginkv.DefaultCreatedAt = pluginkvDescCreatedAt.Default.(func() time.Time)
+	// pluginkvDescUpdatedAt is the schema descriptor for updated_at field.
+	pluginkvDescUpdatedAt := pluginkvFields[4].Descriptor()
+	// pluginkv.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	pluginkv.DefaultUpdatedAt = pluginkvDescUpdatedAt.Default.(func() time.Time)
+	// pluginkv.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	pluginkv.UpdateDefaultUpdatedAt = pluginkvDescUpdatedAt.UpdateDefault.(func() time.Time)
 	pluginstateFields := schema.PluginState{}.Fields()
 	_ = pluginstateFields
 	// pluginstateDescEnabled is the schema descriptor for enabled field.

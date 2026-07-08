@@ -1219,6 +1219,46 @@ var (
 			},
 		},
 	}
+	// PluginInstallationsColumns holds the columns for the "plugin_installations" table.
+	PluginInstallationsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Size: 64},
+		{Name: "version", Type: field.TypeString, Size: 64},
+		{Name: "manifest", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "install_path", Type: field.TypeString},
+		{Name: "checksum", Type: field.TypeString, Size: 64},
+		{Name: "config", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "installed_by", Type: field.TypeString, Default: ""},
+		{Name: "installed_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+	}
+	// PluginInstallationsTable holds the schema information for the "plugin_installations" table.
+	PluginInstallationsTable = &schema.Table{
+		Name:       "plugin_installations",
+		Columns:    PluginInstallationsColumns,
+		PrimaryKey: []*schema.Column{PluginInstallationsColumns[0]},
+	}
+	// PluginKvsColumns holds the columns for the "plugin_kvs" table.
+	PluginKvsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "plugin_id", Type: field.TypeString, Size: 64},
+		{Name: "key", Type: field.TypeString, Size: 256},
+		{Name: "value", Type: field.TypeString, Size: 2147483647},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+	}
+	// PluginKvsTable holds the schema information for the "plugin_kvs" table.
+	PluginKvsTable = &schema.Table{
+		Name:       "plugin_kvs",
+		Columns:    PluginKvsColumns,
+		PrimaryKey: []*schema.Column{PluginKvsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "pluginkv_plugin_id_key",
+				Unique:  true,
+				Columns: []*schema.Column{PluginKvsColumns[1], PluginKvsColumns[2]},
+			},
+		},
+	}
 	// PluginStatesColumns holds the columns for the "plugin_states" table.
 	PluginStatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Size: 64},
@@ -2013,6 +2053,8 @@ var (
 		PaymentOrdersTable,
 		PaymentProviderInstancesTable,
 		PendingAuthSessionsTable,
+		PluginInstallationsTable,
+		PluginKvsTable,
 		PluginStatesTable,
 		PromoCodesTable,
 		PromoCodeUsagesTable,
@@ -2116,6 +2158,12 @@ func init() {
 	PendingAuthSessionsTable.ForeignKeys[0].RefTable = UsersTable
 	PendingAuthSessionsTable.Annotation = &entsql.Annotation{
 		Table: "pending_auth_sessions",
+	}
+	PluginInstallationsTable.Annotation = &entsql.Annotation{
+		Table: "plugin_installations",
+	}
+	PluginKvsTable.Annotation = &entsql.Annotation{
+		Table: "plugin_kvs",
 	}
 	PluginStatesTable.Annotation = &entsql.Annotation{
 		Table: "plugin_states",

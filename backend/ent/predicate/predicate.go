@@ -72,6 +72,12 @@ type PaymentProviderInstance func(*sql.Selector)
 // PendingAuthSession is the predicate function for pendingauthsession builders.
 type PendingAuthSession func(*sql.Selector)
 
+// PluginInstallation is the predicate function for plugininstallation builders.
+type PluginInstallation func(*sql.Selector)
+
+// PluginKV is the predicate function for pluginkv builders.
+type PluginKV func(*sql.Selector)
+
 // PluginState is the predicate function for pluginstate builders.
 type PluginState func(*sql.Selector)
 

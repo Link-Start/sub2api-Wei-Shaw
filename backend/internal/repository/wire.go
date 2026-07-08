@@ -7,6 +7,7 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pluginhost"
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
@@ -132,6 +133,14 @@ var ProviderSet = wire.NewSet(
 	// Plugin runtime state store (DB + Redis Pub/Sub)
 	NewPluginStateStore,
 	wire.Bind(new(pluginkit.StateStore), new(*PluginStateStore)),
+
+	// External plugin installation registry (外部插件安装登记)
+	NewPluginInstallationRepository,
+	wire.Bind(new(pluginhost.InstallationStore), new(*PluginInstallationRepository)),
+
+	// External plugin KV capability storage (外部插件 KV 能力存储)
+	NewPluginKVRepository,
+	wire.Bind(new(pluginhost.KVStore), new(*PluginKVRepository)),
 
 	// Encryptors
 	NewAESEncryptor,

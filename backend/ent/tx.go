@@ -58,6 +58,10 @@ type Tx struct {
 	PaymentProviderInstance *PaymentProviderInstanceClient
 	// PendingAuthSession is the client for interacting with the PendingAuthSession builders.
 	PendingAuthSession *PendingAuthSessionClient
+	// PluginInstallation is the client for interacting with the PluginInstallation builders.
+	PluginInstallation *PluginInstallationClient
+	// PluginKV is the client for interacting with the PluginKV builders.
+	PluginKV *PluginKVClient
 	// PluginState is the client for interacting with the PluginState builders.
 	PluginState *PluginStateClient
 	// PromoCode is the client for interacting with the PromoCode builders.
@@ -245,6 +249,8 @@ func (tx *Tx) init() {
 	tx.PaymentOrder = NewPaymentOrderClient(tx.config)
 	tx.PaymentProviderInstance = NewPaymentProviderInstanceClient(tx.config)
 	tx.PendingAuthSession = NewPendingAuthSessionClient(tx.config)
+	tx.PluginInstallation = NewPluginInstallationClient(tx.config)
+	tx.PluginKV = NewPluginKVClient(tx.config)
 	tx.PluginState = NewPluginStateClient(tx.config)
 	tx.PromoCode = NewPromoCodeClient(tx.config)
 	tx.PromoCodeUsage = NewPromoCodeUsageClient(tx.config)
