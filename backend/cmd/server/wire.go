@@ -5,7 +5,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -14,6 +16,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
+	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
+	"github.com/Wei-Shaw/sub2api/internal/plugins"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -24,8 +28,10 @@ import (
 )
 
 type Application struct {
-	Server  *http.Server
-	Cleanup func()
+	Server *http.Server
+	// PluginManager 暴露给 main：在 server 监听前调用 Bootstrap 完成插件装配。
+	PluginManager *pluginkit.Manager
+	Cleanup       func()
 }
 
 func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
@@ -49,13 +55,39 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		// BuildInfo provider
 		provideServiceBuildInfo,
 
+		// Plugin runtime (内建层插件内核)
+		providePluginHostDeps,
+		providePluginsConfig,
+		providePluginManager,
+
 		// Cleanup function provider
 		provideCleanup,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "Cleanup"),
+		wire.Struct(new(Application), "Server", "PluginManager", "Cleanup"),
 	)
 	return nil, nil
+}
+
+// providePluginHostDeps 装配各插件 Host 所需的宿主侧依赖。
+// Logger 取全局 slog（main 在 initializeApplication 之前已完成 logger.Init）。
+func providePluginHostDeps(entClient *ent.Client, rdb *redis.Client) pluginkit.HostDeps {
+	return pluginkit.HostDeps{
+		Logger: slog.Default(),
+		DB:     entClient,
+		Redis:  rdb,
+	}
+}
+
+// providePluginsConfig 从主配置的 plugins 原始子树还原点分插件 ID 的私有配置。
+func providePluginsConfig(cfg *config.Config) (pluginkit.PluginsConfig, error) {
+	return pluginkit.ParsePluginsConfig(cfg.PluginsRaw)
+}
+
+// providePluginManager 用编译期装配清单实例化插件生命周期驱动器。
+// 此处仅实例化（Factory 无副作用），Bootstrap 由 main 在 server 监听前调用。
+func providePluginManager(hostDeps pluginkit.HostDeps, states pluginkit.StateStore, pluginsCfg pluginkit.PluginsConfig) (*pluginkit.Manager, error) {
+	return pluginkit.NewManager(hostDeps, states, pluginsCfg, plugins.Builtin())
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {
@@ -103,6 +135,8 @@ func provideCleanup(
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
 	channelMonitorRunner *service.ChannelMonitorRunner,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
+	pluginManager *pluginkit.Manager,
+	pluginStates pluginkit.StateStore,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -278,6 +312,17 @@ func provideCleanup(
 					quotaFlusher.Stop()
 				}
 				return nil
+			}},
+			{"PluginRuntime", func() error {
+				// 先逆序 Stop 全部 running 插件，再关停启停状态机（订阅与对账循环）。
+				var errs []error
+				if pluginManager != nil {
+					errs = append(errs, pluginManager.StopAll(ctx))
+				}
+				if pluginStates != nil {
+					errs = append(errs, pluginStates.Close())
+				}
+				return errors.Join(errs...)
 			}},
 		}
 

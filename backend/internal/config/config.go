@@ -94,6 +94,10 @@ type Config struct {
 	Update                  UpdateConfig                  `mapstructure:"update"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
+	// PluginsRaw 承载 plugins: 配置子树的原始形态（保留 viper 对含点 key 的拆层结果），
+	// 由 pluginkit.ParsePluginsConfig 在 provider 层还原为点分插件 ID → 私有配置。
+	// 插件的 enabled 状态不在配置文件中（唯一事实源是 DB 的 plugin_states 表）。
+	PluginsRaw map[string]any `mapstructure:"plugins"`
 }
 
 type LogConfig struct {

@@ -154,6 +154,13 @@ func runMainServer() {
 	}
 	defer app.Cleanup()
 
+	// 插件内核 Bootstrap：挂载插件路由并拉起 enabled 插件，必须在监听前完成。
+	// 单插件 Init/Start 失败已在 Manager 内隔离为 failed 态，不会传导到这里；
+	// 返回非 nil 仅代表内核自身异常，按 fail-fast 处理。
+	if err := app.PluginManager.Bootstrap(context.Background()); err != nil {
+		log.Fatalf("Failed to bootstrap plugins: %v", err)
+	}
+
 	// 启动服务器
 	go func() {
 		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
