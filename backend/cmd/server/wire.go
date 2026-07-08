@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pluginhost"
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	"github.com/Wei-Shaw/sub2api/internal/plugins"
+	"github.com/Wei-Shaw/sub2api/internal/plugins/jobs"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -63,6 +64,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		// Plugin runtime (内建层插件内核)
 		providePluginHostDeps,
 		providePluginsConfig,
+		provideBuiltinFactories,
 		providePluginManager,
 
 		// External plugin layer (外部插件层：子进程宿主 + 安装器，phase-4)
@@ -93,10 +95,27 @@ func providePluginsConfig(cfg *config.Config) (pluginkit.PluginsConfig, error) {
 	return pluginkit.ParsePluginsConfig(cfg.PluginsRaw)
 }
 
+// provideBuiltinFactories 汇总全部编译期装配的插件工厂：内建示例 + 迁移自
+// 既有常驻服务的 job.* 插件（jobs 包）。作为管理器与外部层保留 ID 集合的
+// 单一事实源，确保 job ID 也被纳入外部插件 ID 冲突保护。
+func provideBuiltinFactories(
+	accountRepo service.AccountRepository,
+	proxyRepo service.ProxyRepository,
+	idempotencyRepo service.IdempotencyRepository,
+	cfg *config.Config,
+) []pluginkit.Factory {
+	return append(plugins.Builtin(), jobs.Factories(jobs.JobDeps{
+		AccountRepo:     accountRepo,
+		ProxyRepo:       proxyRepo,
+		IdempotencyRepo: idempotencyRepo,
+		Config:          cfg,
+	})...)
+}
+
 // providePluginManager 用编译期装配清单实例化插件生命周期驱动器。
 // 此处仅实例化（Factory 无副作用），Bootstrap 由 main 在 server 监听前调用。
-func providePluginManager(hostDeps pluginkit.HostDeps, states pluginkit.StateStore, pluginsCfg pluginkit.PluginsConfig) (*pluginkit.Manager, error) {
-	return pluginkit.NewManager(hostDeps, states, pluginsCfg, plugins.Builtin())
+func providePluginManager(hostDeps pluginkit.HostDeps, states pluginkit.StateStore, pluginsCfg pluginkit.PluginsConfig, factories []pluginkit.Factory) (*pluginkit.Manager, error) {
+	return pluginkit.NewManager(hostDeps, states, pluginsCfg, factories)
 }
 
 // providePluginSupervisor 实例化外部插件子进程宿主（无副作用，
@@ -124,6 +143,7 @@ func provideExternalPluginLayer(
 	installs pluginhost.InstallationStore,
 	kv pluginhost.KVStore,
 	states pluginkit.StateStore,
+	factories []pluginkit.Factory,
 ) *pluginhost.ExternalLayer {
 	installer := pluginhost.NewInstaller(pluginhost.InstallerDeps{
 		Store:         pluginhost.NewPackageStore(pluginhost.DefaultStoreRoot()),
@@ -131,7 +151,7 @@ func provideExternalPluginLayer(
 		States:        states,
 		Runtime:       supervisor,
 		KV:            kv,
-		Reserved:      pluginhost.ReservedIDs(plugins.Builtin()),
+		Reserved:      pluginhost.ReservedIDs(factories),
 		Logger:        slog.Default(),
 	})
 	return &pluginhost.ExternalLayer{
@@ -163,11 +183,8 @@ func provideCleanup(
 	opsSystemLogSink *service.OpsSystemLogSink,
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	tokenRefresh *service.TokenRefreshService,
-	accountExpiry *service.AccountExpiryService,
-	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
-	idempotencyCleanup *service.IdempotencyCleanupService,
 	batchImageCleanup *service.BatchImageCleanupService,
 	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
@@ -249,12 +266,6 @@ func provideCleanup(
 				}
 				return nil
 			}},
-			{"IdempotencyCleanupService", func() error {
-				if idempotencyCleanup != nil {
-					idempotencyCleanup.Stop()
-				}
-				return nil
-			}},
 			{"BatchImageCleanupService", func() error {
 				if batchImageCleanup != nil {
 					batchImageCleanup.Stop()
@@ -269,14 +280,6 @@ func provideCleanup(
 			}},
 			{"TokenRefreshService", func() error {
 				tokenRefresh.Stop()
-				return nil
-			}},
-			{"AccountExpiryService", func() error {
-				accountExpiry.Stop()
-				return nil
-			}},
-			{"ProxyExpiryService", func() error {
-				proxyExpiry.Stop()
 				return nil
 			}},
 			{"SubscriptionExpiryService", func() error {

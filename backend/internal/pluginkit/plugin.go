@@ -64,6 +64,14 @@ type APIProvider interface {
 	MountRoutes(r Router)
 }
 
+// DefaultEnabler 由"默认应启用"的插件实现（典型：从既有常驻服务迁移来的
+// job.* 插件，迁移前一直在运行，迁移后必须保持默认开启以零行为变更）。
+// 仅在插件从未有过显式状态记录时生效：Bootstrap 首次为其落一条 enabled=true
+// 记录，此后一切以状态存储为准（管理员显式停用不会被再次翻开）。
+type DefaultEnabler interface {
+	DefaultEnabled() bool
+}
+
 // State 是插件的运行状态。
 type State string
 

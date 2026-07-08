@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pluginhost"
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	"github.com/Wei-Shaw/sub2api/internal/plugins"
+	"github.com/Wei-Shaw/sub2api/internal/plugins/jobs"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -274,8 +275,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	batchImageCleanupService := service.ProvideBatchImageCleanupService(batchImageRepository, accountRepository, configConfig)
 	batchImageHandler := handler.NewBatchImageHandler(batchImagePublicService, batchImageDownloadService, batchImageCleanupService)
 	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)
-	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
-	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, channelMonitorUserHandler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, batchImageHandler, idempotencyCoordinator, idempotencyCleanupService)
+	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, channelMonitorUserHandler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, batchImageHandler, idempotencyCoordinator)
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService)
 	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService)
 	apiKeyAuthMiddleware := middleware.NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, configConfig)
@@ -288,14 +288,15 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	manager, err := providePluginManager(hostDeps, pluginStateStore, pluginsConfig)
+	v := provideBuiltinFactories(accountRepository, proxyRepository, idempotencyRepository, configConfig)
+	manager, err := providePluginManager(hostDeps, pluginStateStore, pluginsConfig, v)
 	if err != nil {
 		return nil, err
 	}
 	pluginInstallationRepository := repository.NewPluginInstallationRepository(client)
 	pluginKVRepository := repository.NewPluginKVRepository(client)
 	supervisor := providePluginSupervisor(pluginInstallationRepository, pluginKVRepository, pluginStateStore, configConfig)
-	externalLayer := provideExternalPluginLayer(supervisor, pluginInstallationRepository, pluginKVRepository, pluginStateStore)
+	externalLayer := provideExternalPluginLayer(supervisor, pluginInstallationRepository, pluginKVRepository, pluginStateStore, v)
 	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, manager, pluginStateStore, externalLayer)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
 	opsMetricsCollector := service.ProvideOpsMetricsCollector(opsRepository, settingRepository, accountRepository, concurrencyService, db, redisClient, configConfig)
@@ -304,20 +305,18 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	opsCleanupService := service.ProvideOpsCleanupService(opsRepository, db, redisClient, configConfig, channelMonitorService, settingRepository, opsService)
 	opsScheduledReportService := service.ProvideOpsScheduledReportService(opsService, userService, emailService, redisClient, configConfig)
 	tokenRefreshService := service.ProvideTokenRefreshService(accountRepository, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, compositeTokenCacheInvalidator, schedulerCache, configConfig, tempUnschedCache, privacyClientFactory, proxyRepository, oAuthRefreshAPI, openAIGatewayService)
-	accountExpiryService := service.ProvideAccountExpiryService(accountRepository)
-	proxyExpiryService := service.ProvideProxyExpiryService(proxyRepository)
 	subscriptionExpiryService := service.ProvideSubscriptionExpiryService(userSubscriptionRepository, settingRepository, notificationEmailService, leaderLockCache, db)
 	batchImageWorkerRuntime := service.ProvideBatchImageWorkerRuntime(batchImageRepository, accountRepository, batchImageQueue, usageBillingRepository, usageLogRepository, batchImageModelPricingResolver, apiKeyAuthCacheInvalidator, configConfig)
 	scheduledTestRunnerService := service.ProvideScheduledTestRunnerService(scheduledTestPlanRepository, scheduledTestService, accountTestService, rateLimitService, configConfig)
 	paymentOrderExpiryService := service.ProvidePaymentOrderExpiryService(paymentService, leaderLockCache, db)
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, manager, pluginStateStore, supervisor)
+	v2 := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, subscriptionExpiryService, usageCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, manager, pluginStateStore, supervisor)
 	application := &Application{
 		Server:           httpServer,
 		PluginManager:    manager,
 		PluginSupervisor: supervisor,
-		Cleanup:          v,
+		Cleanup:          v2,
 	}
 	return application, nil
 }
@@ -349,10 +348,27 @@ func providePluginsConfig(cfg *config.Config) (pluginkit.PluginsConfig, error) {
 	return pluginkit.ParsePluginsConfig(cfg.PluginsRaw)
 }
 
+// provideBuiltinFactories 汇总全部编译期装配的插件工厂：内建示例 + 迁移自
+// 既有常驻服务的 job.* 插件（jobs 包）。作为管理器与外部层保留 ID 集合的
+// 单一事实源，确保 job ID 也被纳入外部插件 ID 冲突保护。
+func provideBuiltinFactories(
+	accountRepo service.AccountRepository,
+	proxyRepo service.ProxyRepository,
+	idempotencyRepo service.IdempotencyRepository,
+	cfg *config.Config,
+) []pluginkit.Factory {
+	return append(plugins.Builtin(), jobs.Factories(jobs.JobDeps{
+		AccountRepo:     accountRepo,
+		ProxyRepo:       proxyRepo,
+		IdempotencyRepo: idempotencyRepo,
+		Config:          cfg,
+	})...)
+}
+
 // providePluginManager 用编译期装配清单实例化插件生命周期驱动器。
 // 此处仅实例化（Factory 无副作用），Bootstrap 由 main 在 server 监听前调用。
-func providePluginManager(hostDeps pluginkit.HostDeps, states pluginkit.StateStore, pluginsCfg pluginkit.PluginsConfig) (*pluginkit.Manager, error) {
-	return pluginkit.NewManager(hostDeps, states, pluginsCfg, plugins.Builtin())
+func providePluginManager(hostDeps pluginkit.HostDeps, states pluginkit.StateStore, pluginsCfg pluginkit.PluginsConfig, factories []pluginkit.Factory) (*pluginkit.Manager, error) {
+	return pluginkit.NewManager(hostDeps, states, pluginsCfg, factories)
 }
 
 // providePluginSupervisor 实例化外部插件子进程宿主（无副作用，
@@ -380,6 +396,7 @@ func provideExternalPluginLayer(
 	installs pluginhost.InstallationStore,
 	kv pluginhost.KVStore,
 	states pluginkit.StateStore,
+	factories []pluginkit.Factory,
 ) *pluginhost.ExternalLayer {
 	installer := pluginhost.NewInstaller(pluginhost.InstallerDeps{
 		Store:         pluginhost.NewPackageStore(pluginhost.DefaultStoreRoot()),
@@ -387,7 +404,7 @@ func provideExternalPluginLayer(
 		States:        states,
 		Runtime:       supervisor,
 		KV:            kv,
-		Reserved:      pluginhost.ReservedIDs(plugins.Builtin()),
+		Reserved:      pluginhost.ReservedIDs(factories),
 		Logger:        slog.Default(),
 	})
 	return &pluginhost.ExternalLayer{
@@ -419,11 +436,8 @@ func provideCleanup(
 	opsSystemLogSink *service.OpsSystemLogSink,
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	tokenRefresh *service.TokenRefreshService,
-	accountExpiry *service.AccountExpiryService,
-	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
-	idempotencyCleanup *service.IdempotencyCleanupService,
 	batchImageCleanup *service.BatchImageCleanupService,
 	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
@@ -504,12 +518,6 @@ func provideCleanup(
 				}
 				return nil
 			}},
-			{"IdempotencyCleanupService", func() error {
-				if idempotencyCleanup != nil {
-					idempotencyCleanup.Stop()
-				}
-				return nil
-			}},
 			{"BatchImageCleanupService", func() error {
 				if batchImageCleanup != nil {
 					batchImageCleanup.Stop()
@@ -524,14 +532,6 @@ func provideCleanup(
 			}},
 			{"TokenRefreshService", func() error {
 				tokenRefresh.Stop()
-				return nil
-			}},
-			{"AccountExpiryService", func() error {
-				accountExpiry.Stop()
-				return nil
-			}},
-			{"ProxyExpiryService", func() error {
-				proxyExpiry.Stop()
 				return nil
 			}},
 			{"SubscriptionExpiryService", func() error {

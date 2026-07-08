@@ -146,6 +146,23 @@ func (m *Manager) Bootstrap(ctx context.Context) error {
 		e.engine = engine
 	}
 
+	// DefaultEnabler 自播种：从未有显式记录的"默认启用"插件（典型：迁移自
+	// 既有常驻服务的 job.*）落一条 enabled=true 记录。放在 Subscribe 之前，
+	// 使播种不触发 onToggle（下方启动循环统一拉起），且此后管理员的显式停用
+	// 因记录已存在而不会被再次翻开。
+	for _, id := range m.order {
+		de, ok := m.entries[id].plugin.(DefaultEnabler)
+		if !ok || !de.DefaultEnabled() {
+			continue
+		}
+		if _, exists := m.states.Lookup(id); exists {
+			continue
+		}
+		if err := m.states.SetEnabled(ctx, id, true, "pluginkit:default-enabled"); err != nil {
+			m.logger.Warn("plugin_default_seed_failed", "plugin", string(id), "error", err.Error())
+		}
+	}
+
 	// 先订阅再启动：Bootstrap 期间到达的 toggle 由幂等 start/stop 与内存快照复核兜底，
 	// 既不丢事件也不会双启（per-plugin lifeMu 串行）。
 	m.states.Subscribe(m.onToggle)

@@ -117,6 +117,13 @@ func (s *memoryStateStore) Enabled(id pluginkit.ID) bool {
 	return s.enabled[id]
 }
 
+func (s *memoryStateStore) Lookup(id pluginkit.ID) (bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	enabled, exists := s.enabled[id]
+	return enabled, exists
+}
+
 func (s *memoryStateStore) SetEnabled(_ context.Context, id pluginkit.ID, enabled bool, _ string) error {
 	s.mu.Lock()
 	s.enabled[id] = enabled

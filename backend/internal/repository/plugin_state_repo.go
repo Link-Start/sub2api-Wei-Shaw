@@ -105,6 +105,15 @@ func (s *PluginStateStore) Enabled(id pluginkit.ID) bool {
 	return s.enabled[id]
 }
 
+// Lookup 除启用态外报告是否存在显式记录。内存快照对每一行（无论 true/false）
+// 都有条目，故 comma-ok 即存在性判定。
+func (s *PluginStateStore) Lookup(id pluginkit.ID) (bool, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	enabled, exists := s.enabled[id]
+	return enabled, exists
+}
+
 // SetEnabled 按契约顺序生效：DB upsert → 本地内存 → Redis 广播 → 本地订阅者回调。
 // 广播失败不回滚本地生效（其他实例由对账周期兜底收敛）。
 func (s *PluginStateStore) SetEnabled(ctx context.Context, id pluginkit.ID, enabled bool, updatedBy string) error {

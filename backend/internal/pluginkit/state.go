@@ -20,6 +20,9 @@ type StateChange struct {
 //   - Close 停止订阅与对账循环，幂等。
 type StateStore interface {
 	Enabled(id ID) bool
+	// Lookup 除返回启用态外，还报告该 ID 是否存在显式记录（exists=false 表示
+	// 从未被设置过——用于区分"显式停用"与"从无记录"，驱动 DefaultEnabler 自播种）。
+	Lookup(id ID) (enabled bool, exists bool)
 	SetEnabled(ctx context.Context, id ID, enabled bool, updatedBy string) error
 	Subscribe(fn func(StateChange))
 	Close() error

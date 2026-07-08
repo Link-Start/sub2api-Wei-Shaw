@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +40,13 @@ func (s *fakeStateStore) Enabled(id ID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.enabled[id]
+}
+
+func (s *fakeStateStore) Lookup(id ID) (bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	enabled, exists := s.enabled[id]
+	return enabled, exists
 }
 
 func (s *fakeStateStore) SetEnabled(_ context.Context, id ID, enabled bool, _ string) error {
@@ -131,6 +139,64 @@ func (p *testPlugin) counters() (initCalls, startCalls, stopCalls, mountCalls in
 type barePlugin struct{ id ID }
 
 func (p *barePlugin) ID() ID { return p.id }
+
+// defaultEnabledPlugin 实现 DefaultEnabler + Runner，用于验证自播种。
+type defaultEnabledPlugin struct {
+	id       ID
+	dflt     bool
+	started  atomic.Bool
+	startCnt atomic.Int32
+}
+
+func (p *defaultEnabledPlugin) ID() ID               { return p.id }
+func (p *defaultEnabledPlugin) DefaultEnabled() bool { return p.dflt }
+func (p *defaultEnabledPlugin) Start(context.Context) error {
+	p.started.Store(true)
+	p.startCnt.Add(1)
+	return nil
+}
+func (p *defaultEnabledPlugin) Stop(context.Context) error {
+	p.started.Store(false)
+	return nil
+}
+
+func TestBootstrap_DefaultEnabledSelfSeeds(t *testing.T) {
+	store := newFakeStateStore()
+	p := &defaultEnabledPlugin{id: "job.seed", dflt: true}
+	m := newTestManager(t, store, nil, func() Plugin { return p })
+	require.NoError(t, m.Bootstrap(context.Background()))
+
+	// 自播种：从无记录 → 落 enabled=true → 启动。
+	enabled, exists := store.Lookup("job.seed")
+	require.True(t, exists, "default-enabled 插件应被播种出显式记录")
+	require.True(t, enabled)
+	require.True(t, p.started.Load(), "播种后应随 Bootstrap 启动")
+}
+
+func TestBootstrap_DefaultEnabledRespectsExplicitDisable(t *testing.T) {
+	store := newFakeStateStore()
+	// 管理员此前显式停用（记录已存在为 false）。
+	require.NoError(t, store.SetEnabled(context.Background(), "job.seed", false, "admin"))
+	p := &defaultEnabledPlugin{id: "job.seed", dflt: true}
+	m := newTestManager(t, store, nil, func() Plugin { return p })
+	require.NoError(t, m.Bootstrap(context.Background()))
+
+	// 已有显式记录 → 不被 default 翻开 → 不启动。
+	enabled, _ := store.Lookup("job.seed")
+	require.False(t, enabled, "显式停用不应被 default-enabled 覆盖")
+	require.False(t, p.started.Load())
+}
+
+func TestBootstrap_DefaultDisabledNotSeeded(t *testing.T) {
+	store := newFakeStateStore()
+	p := &defaultEnabledPlugin{id: "job.off", dflt: false}
+	m := newTestManager(t, store, nil, func() Plugin { return p })
+	require.NoError(t, m.Bootstrap(context.Background()))
+
+	_, exists := store.Lookup("job.off")
+	require.False(t, exists, "DefaultEnabled=false 不应被播种")
+	require.False(t, p.started.Load())
+}
 
 func newTestManager(t *testing.T, store StateStore, cfg PluginsConfig, factories ...Factory) *Manager {
 	t.Helper()
