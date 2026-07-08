@@ -205,9 +205,19 @@ func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *Timing
 	return svc
 }
 
-// account_expiry / proxy_expiry / idempotency_cleanup 已迁移为 job.* 内建插件
-// （internal/plugins/jobs），生命周期由 pluginkit.Manager 驱动，不再经 Wire
-// 直接启停。其构造器 NewXxxService 保留供 job 插件壳按需实例化。
+// ProvideAccountExpiryService creates and starts AccountExpiryService.
+func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpiryService {
+	svc := NewAccountExpiryService(accountRepo, time.Minute)
+	svc.Start()
+	return svc
+}
+
+// ProvideProxyExpiryService creates and starts ProxyExpiryService.
+func ProvideProxyExpiryService(proxyRepo ProxyRepository) *ProxyExpiryService {
+	svc := NewProxyExpiryService(proxyRepo, time.Minute)
+	svc.Start()
+	return svc
+}
 
 // ProvideSubscriptionExpiryService creates and starts SubscriptionExpiryService.
 func ProvideSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, settingRepo SettingRepository, notificationEmailService *NotificationEmailService, lockCache LeaderLockCache, db *sql.DB) *SubscriptionExpiryService {
@@ -393,6 +403,12 @@ func ProvideIdempotencyCoordinator(repo IdempotencyRepository, cfg *config.Confi
 
 func ProvideSystemOperationLockService(repo IdempotencyRepository, cfg *config.Config) *SystemOperationLockService {
 	return NewSystemOperationLockService(repo, buildIdempotencyConfig(cfg))
+}
+
+func ProvideIdempotencyCleanupService(repo IdempotencyRepository, cfg *config.Config) *IdempotencyCleanupService {
+	svc := NewIdempotencyCleanupService(repo, cfg)
+	svc.Start()
+	return svc
 }
 
 // ProvideScheduledTestService creates ScheduledTestService.
@@ -611,6 +627,8 @@ var ProviderSet = wire.NewSet(
 	NewCRSSyncService,
 	ProvideUpdateService,
 	ProvideTokenRefreshService,
+	ProvideAccountExpiryService,
+	ProvideProxyExpiryService,
 	ProvideSubscriptionExpiryService,
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,
@@ -626,6 +644,7 @@ var ProviderSet = wire.NewSet(
 	NewDigestSessionStore,
 	ProvideIdempotencyCoordinator,
 	ProvideSystemOperationLockService,
+	ProvideIdempotencyCleanupService,
 	ProvideScheduledTestService,
 	ProvideScheduledTestRunnerService,
 	NewGroupCapacityService,

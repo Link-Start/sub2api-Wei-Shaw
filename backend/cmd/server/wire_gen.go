@@ -17,7 +17,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pluginhost"
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	"github.com/Wei-Shaw/sub2api/internal/plugins"
-	"github.com/Wei-Shaw/sub2api/internal/plugins/jobs"
 	"github.com/Wei-Shaw/sub2api/internal/plugins/moderation"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server"
@@ -289,7 +288,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	}
 	contentModerationRepository := repository.NewContentModerationRepository(db)
 	contentModerationHashCache := repository.NewContentModerationHashCache(redisClient)
-	v := provideBuiltinFactories(accountRepository, proxyRepository, idempotencyRepository, configConfig, settingRepository, contentModerationRepository, contentModerationHashCache, groupRepository, userRepository, apiKeyAuthCacheInvalidator, emailService, contentModerationHandle)
+	v := provideBuiltinFactories(settingRepository, contentModerationRepository, contentModerationHashCache, groupRepository, userRepository, apiKeyAuthCacheInvalidator, emailService, contentModerationHandle)
 	manager, err := providePluginManager(hostDeps, pluginStateStore, pluginsConfig, v)
 	if err != nil {
 		return nil, err
@@ -306,13 +305,16 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	opsCleanupService := service.ProvideOpsCleanupService(opsRepository, db, redisClient, configConfig, channelMonitorService, settingRepository, opsService)
 	opsScheduledReportService := service.ProvideOpsScheduledReportService(opsService, userService, emailService, redisClient, configConfig)
 	tokenRefreshService := service.ProvideTokenRefreshService(accountRepository, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, compositeTokenCacheInvalidator, schedulerCache, configConfig, tempUnschedCache, privacyClientFactory, proxyRepository, oAuthRefreshAPI, openAIGatewayService)
+	accountExpiryService := service.ProvideAccountExpiryService(accountRepository)
+	proxyExpiryService := service.ProvideProxyExpiryService(proxyRepository)
 	subscriptionExpiryService := service.ProvideSubscriptionExpiryService(userSubscriptionRepository, settingRepository, notificationEmailService, leaderLockCache, db)
+	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
 	batchImageWorkerRuntime := service.ProvideBatchImageWorkerRuntime(batchImageRepository, accountRepository, batchImageQueue, usageBillingRepository, usageLogRepository, batchImageModelPricingResolver, apiKeyAuthCacheInvalidator, configConfig)
 	scheduledTestRunnerService := service.ProvideScheduledTestRunnerService(scheduledTestPlanRepository, scheduledTestService, accountTestService, rateLimitService, configConfig)
 	paymentOrderExpiryService := service.ProvidePaymentOrderExpiryService(paymentService, leaderLockCache, db)
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v2 := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, subscriptionExpiryService, usageCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, manager, pluginStateStore, supervisor)
+	v2 := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, manager, pluginStateStore, supervisor)
 	application := &Application{
 		Server:           httpServer,
 		PluginManager:    manager,
@@ -349,14 +351,11 @@ func providePluginsConfig(cfg *config.Config) (pluginkit.PluginsConfig, error) {
 	return pluginkit.ParsePluginsConfig(cfg.PluginsRaw)
 }
 
-// provideBuiltinFactories 汇总全部编译期装配的插件工厂：内建示例 + 迁移自
-// 既有常驻服务的 job.* 插件（jobs 包）+ 功能域插件（内容审计）。作为管理器
-// 与外部层保留 ID 集合的单一事实源，确保迁移型 ID 也被纳入外部插件冲突保护。
+// provideBuiltinFactories 汇总全部编译期装配的插件工厂：内建示例 + 功能域
+// 插件（内容审计）。作为管理器与外部层保留 ID 集合的单一事实源。
+// 拆分口径（用户决策）：插件 = 按功能域整体竖切；基础设施型后台 worker
+// （账号/代理过期、幂等清理等）不是插件，由 Wire 直接管理常驻生命周期。
 func provideBuiltinFactories(
-	accountRepo service.AccountRepository,
-	proxyRepo service.ProxyRepository,
-	idempotencyRepo service.IdempotencyRepository,
-	cfg *config.Config,
 	settingRepo service.SettingRepository,
 	moderationRepo moderation.ContentModerationRepository,
 	moderationHashCache moderation.ContentModerationHashCache,
@@ -366,13 +365,7 @@ func provideBuiltinFactories(
 	emailService *service.EmailService,
 	moderationHandle *moderation.ContentModerationHandle,
 ) []pluginkit.Factory {
-	factories := append(plugins.Builtin(), jobs.Factories(jobs.JobDeps{
-		AccountRepo:     accountRepo,
-		ProxyRepo:       proxyRepo,
-		IdempotencyRepo: idempotencyRepo,
-		Config:          cfg,
-	})...)
-	return append(factories, moderation.New(moderation.Deps{
+	return append(plugins.Builtin(), moderation.New(moderation.Deps{
 		SettingRepo:          settingRepo,
 		Repo:                 moderationRepo,
 		HashCache:            moderationHashCache,
@@ -455,8 +448,11 @@ func provideCleanup(
 	opsSystemLogSink *service.OpsSystemLogSink,
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	tokenRefresh *service.TokenRefreshService,
+	accountExpiry *service.AccountExpiryService,
+	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
+	idempotencyCleanup *service.IdempotencyCleanupService,
 	batchImageCleanup *service.BatchImageCleanupService,
 	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
@@ -537,6 +533,12 @@ func provideCleanup(
 				}
 				return nil
 			}},
+			{"IdempotencyCleanupService", func() error {
+				if idempotencyCleanup != nil {
+					idempotencyCleanup.Stop()
+				}
+				return nil
+			}},
 			{"BatchImageCleanupService", func() error {
 				if batchImageCleanup != nil {
 					batchImageCleanup.Stop()
@@ -551,6 +553,14 @@ func provideCleanup(
 			}},
 			{"TokenRefreshService", func() error {
 				tokenRefresh.Stop()
+				return nil
+			}},
+			{"AccountExpiryService", func() error {
+				accountExpiry.Stop()
+				return nil
+			}},
+			{"ProxyExpiryService", func() error {
+				proxyExpiry.Stop()
 				return nil
 			}},
 			{"SubscriptionExpiryService", func() error {
