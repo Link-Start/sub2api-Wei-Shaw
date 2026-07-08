@@ -1,0 +1,25 @@
+{
+  "id": "demo-external",
+  "name": "External Demo Plugin",
+  "version": "0.2.0",
+  "description": "sub2api external plugin example: user-side JSON API, SSE streaming, KV/Log capability warm-up, and a runtime-loaded frontend view.",
+  "protocol": "http/1",
+  "backend": {
+    "executables": {
+      "linux-amd64": "bin/plugin-linux-amd64",
+      "linux-arm64": "bin/plugin-linux-arm64",
+      "darwin-arm64": "bin/plugin-darwin-arm64"
+    }
+  },
+  "frontend": {
+    "entry": "webapp/plugin.js"
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "greeting": {
+        "type": "string"
+      }
+    }
+  }
+}

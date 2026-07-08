@@ -8,6 +8,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pluginhost"
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/server/routes"
@@ -35,6 +36,7 @@ func SetupRouter(
 	redisClient *redis.Client,
 	pluginManager *pluginkit.Manager,
 	pluginStates pluginkit.StateStore,
+	externalPlugins *pluginhost.ExternalLayer,
 ) *gin.Engine {
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
 	var cachedFrameOrigins atomic.Pointer[[]string]
@@ -84,7 +86,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, pluginManager, pluginStates)
+	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, pluginManager, pluginStates, externalPlugins)
 
 	return r
 }
@@ -104,6 +106,7 @@ func registerRoutes(
 	redisClient *redis.Client,
 	pluginManager *pluginkit.Manager,
 	pluginStates pluginkit.StateStore,
+	externalPlugins *pluginhost.ExternalLayer,
 ) {
 	// 通用路由（健康检查、状态等）
 	routes.RegisterCommonRoutes(r)
@@ -117,7 +120,12 @@ func registerRoutes(
 	routes.RegisterAdminRoutes(v1, h, adminAuth, settingService)
 	routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg)
 	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, settingService)
-	routes.RegisterPluginRoutes(v1, jwtAuth, adminAuth, settingService, pluginManager, pluginStates)
+	pluginOpts := []routes.PluginRouteOption{}
+	if externalPlugins != nil {
+		pluginOpts = append(pluginOpts,
+			routes.WithExternalPluginLayer(externalPlugins.Installer, externalPlugins.Installs, externalPlugins.Supervisor))
+	}
+	routes.RegisterPluginRoutes(v1, jwtAuth, adminAuth, settingService, pluginManager, pluginStates, pluginOpts...)
 
 	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
 }

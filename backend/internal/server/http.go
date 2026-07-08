@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
+	"github.com/Wei-Shaw/sub2api/internal/pluginhost"
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -41,6 +42,7 @@ func ProvideRouter(
 	redisClient *redis.Client,
 	pluginManager *pluginkit.Manager,
 	pluginStates pluginkit.StateStore,
+	externalPlugins *pluginhost.ExternalLayer,
 ) *gin.Engine {
 	if cfg.Server.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -97,7 +99,7 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, pluginManager, pluginStates)
+	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, pluginManager, pluginStates, externalPlugins)
 }
 
 // ProvideHTTPServer 提供 HTTP 服务器

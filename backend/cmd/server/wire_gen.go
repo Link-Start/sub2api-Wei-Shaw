@@ -14,12 +14,14 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
+	"github.com/Wei-Shaw/sub2api/internal/pluginhost"
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	"github.com/Wei-Shaw/sub2api/internal/plugins"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/redis/go-redis/v9"
 	"log"
 	"log/slog"
@@ -290,7 +292,11 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, manager, pluginStateStore)
+	pluginInstallationRepository := repository.NewPluginInstallationRepository(client)
+	pluginKVRepository := repository.NewPluginKVRepository(client)
+	supervisor := providePluginSupervisor(pluginInstallationRepository, pluginKVRepository, pluginStateStore, configConfig)
+	externalLayer := provideExternalPluginLayer(supervisor, pluginInstallationRepository, pluginKVRepository, pluginStateStore)
+	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, manager, pluginStateStore, externalLayer)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
 	opsMetricsCollector := service.ProvideOpsMetricsCollector(opsRepository, settingRepository, accountRepository, concurrencyService, db, redisClient, configConfig)
 	opsAggregationService := service.ProvideOpsAggregationService(opsRepository, settingRepository, db, redisClient, configConfig)
@@ -306,11 +312,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	paymentOrderExpiryService := service.ProvidePaymentOrderExpiryService(paymentService, leaderLockCache, db)
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, manager, pluginStateStore)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher, manager, pluginStateStore, supervisor)
 	application := &Application{
-		Server:        httpServer,
-		PluginManager: manager,
-		Cleanup:       v,
+		Server:           httpServer,
+		PluginManager:    manager,
+		PluginSupervisor: supervisor,
+		Cleanup:          v,
 	}
 	return application, nil
 }
@@ -321,7 +328,10 @@ type Application struct {
 	Server *http.Server
 	// PluginManager 暴露给 main：在 server 监听前调用 Bootstrap 完成插件装配。
 	PluginManager *pluginkit.Manager
-	Cleanup       func()
+	// PluginSupervisor 暴露给 main：在 Bootstrap 之后 Start，
+	// 拉起已启用的外部插件子进程（phase-4）。
+	PluginSupervisor *pluginhost.Supervisor
+	Cleanup          func()
 }
 
 // providePluginHostDeps 装配各插件 Host 所需的宿主侧依赖。
@@ -343,6 +353,48 @@ func providePluginsConfig(cfg *config.Config) (pluginkit.PluginsConfig, error) {
 // 此处仅实例化（Factory 无副作用），Bootstrap 由 main 在 server 监听前调用。
 func providePluginManager(hostDeps pluginkit.HostDeps, states pluginkit.StateStore, pluginsCfg pluginkit.PluginsConfig) (*pluginkit.Manager, error) {
 	return pluginkit.NewManager(hostDeps, states, pluginsCfg, plugins.Builtin())
+}
+
+// providePluginSupervisor 实例化外部插件子进程宿主（无副作用，
+// Start 由 main 在 PluginManager.Bootstrap 之后调用）。
+// 响应头过滤复用核心网关的白名单配置（phase-4 风险对策 3）。
+func providePluginSupervisor(
+	installs pluginhost.InstallationStore,
+	kv pluginhost.KVStore,
+	states pluginkit.StateStore,
+	cfg *config.Config,
+) *pluginhost.Supervisor {
+	return pluginhost.NewSupervisor(pluginhost.SupervisorDeps{
+		Installs:     installs,
+		States:       states,
+		KV:           kv,
+		Logger:       slog.Default(),
+		HeaderFilter: responseheaders.CompileHeaderFilter(cfg.Security.ResponseHeaders),
+	})
+}
+
+// provideExternalPluginLayer 装配外部插件层：包存储（DATA_DIR/plugins）+
+// 安装器（Supervisor 作为 ExternalRuntime 接缝、内建清单为保留 ID 集合）。
+func provideExternalPluginLayer(
+	supervisor *pluginhost.Supervisor,
+	installs pluginhost.InstallationStore,
+	kv pluginhost.KVStore,
+	states pluginkit.StateStore,
+) *pluginhost.ExternalLayer {
+	installer := pluginhost.NewInstaller(pluginhost.InstallerDeps{
+		Store:         pluginhost.NewPackageStore(pluginhost.DefaultStoreRoot()),
+		Installations: installs,
+		States:        states,
+		Runtime:       supervisor,
+		KV:            kv,
+		Reserved:      pluginhost.ReservedIDs(plugins.Builtin()),
+		Logger:        slog.Default(),
+	})
+	return &pluginhost.ExternalLayer{
+		Installer:  installer,
+		Installs:   installs,
+		Supervisor: supervisor,
+	}
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {
@@ -392,6 +444,7 @@ func provideCleanup(
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	pluginManager *pluginkit.Manager,
 	pluginStates pluginkit.StateStore,
+	pluginSupervisor *pluginhost.Supervisor,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -568,8 +621,11 @@ func provideCleanup(
 				return nil
 			}},
 			{"PluginRuntime", func() error {
-				// 先逆序 Stop 全部 running 插件，再关停启停状态机（订阅与对账循环）。
+				// 先停外部插件子进程与内建插件，再关停启停状态机（订阅与对账循环）。
 				var errs []error
+				if pluginSupervisor != nil {
+					errs = append(errs, pluginSupervisor.StopAll(ctx))
+				}
 				if pluginManager != nil {
 					errs = append(errs, pluginManager.StopAll(ctx))
 				}

@@ -85,6 +85,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // quotaFlusher
 		nil, // pluginManager
 		nil, // pluginStates
+		nil, // pluginSupervisor
 	)
 
 	require.NotPanics(t, func() {

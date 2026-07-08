@@ -22,7 +22,8 @@ var pluginAnyMethods = []string{
 // TestRegisterPluginRoutesRouteDiffGuard 是接合点的路由 diff 守护：
 // RegisterPluginRoutes 注册后新增的路由必须恰为 phase-2 PHASE_PLAN §2.4 约定的 4 组端点
 // （快照 / enable|disable / admin 分发器 / user 分发器）加 phase-3 PHASE_PLAN §2.5 的
-// 用户态 enabled 清单端点，且不得移除任何既有路由，
+// 用户态 enabled 清单端点，以及 phase-4 PHASE_PLAN §3.2 的外部插件层端点
+// （upload / 卸载 / config 读写 / 前端资产），且不得移除任何既有路由，
 // 防止未来改动在宿主路由面上静默增删插件端点。
 func TestRegisterPluginRoutesRouteDiffGuard(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -52,9 +53,14 @@ func TestRegisterPluginRoutesRouteDiffGuard(t *testing.T) {
 
 	expected := []string{
 		"GET /api/v1/admin/plugins",
+		"POST /api/v1/admin/plugins/upload",
+		"DELETE /api/v1/admin/plugins/:id",
+		"GET /api/v1/admin/plugins/:id/config",
+		"PUT /api/v1/admin/plugins/:id/config",
 		"POST /api/v1/admin/plugins/:id/enable",
 		"POST /api/v1/admin/plugins/:id/disable",
 		"GET /api/v1/plugins",
+		"GET /api/v1/plugins/:id/assets/*asset",
 	}
 	for _, method := range pluginAnyMethods {
 		expected = append(expected,

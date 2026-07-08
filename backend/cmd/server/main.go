@@ -161,6 +161,13 @@ func runMainServer() {
 		log.Fatalf("Failed to bootstrap plugins: %v", err)
 	}
 
+	// 外部插件宿主：能力服务 + 订阅状态机 + 拉起已启用的外部插件子进程。
+	// 单插件 Launch 失败已在 Supervisor 内隔离为 failed 态；
+	// 返回非 nil 仅代表宿主自身异常（能力服务监听失败等），按 fail-fast 处理。
+	if err := app.PluginSupervisor.Start(context.Background()); err != nil {
+		log.Fatalf("Failed to start external plugin supervisor: %v", err)
+	}
+
 	// 启动服务器
 	go func() {
 		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
