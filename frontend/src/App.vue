@@ -7,6 +7,7 @@ import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
 import { resolveRouteDocumentTitle } from '@/router/title'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
+import { useEnabledPluginsStore } from '@/pluginkit/enabled'
 import { getSetupStatus } from '@/api/setup'
 
 const router = useRouter()
@@ -17,6 +18,7 @@ const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
+const enabledPluginsStore = useEnabledPluginsStore()
 
 function updateDocumentTitle() {
   const customMenuItems = [
@@ -95,6 +97,9 @@ watch(
       })
       subscriptionStore.startPolling()
 
+      // 插件门控清单：登录态建立后拉取（fail-closed：拉取前/失败均视为全部禁用）
+      void enabledPluginsStore.fetchEnabled()
+
       // Announcements: new login vs page refresh restore
       if (oldValue === false) {
         // New login: delay 3s then force fetch
@@ -111,6 +116,7 @@ watch(
       subscriptionStore.clear()
       announcementStore.reset()
       adminComplianceStore.reset()
+      enabledPluginsStore.reset()
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   },

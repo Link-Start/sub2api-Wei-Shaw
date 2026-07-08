@@ -1,4 +1,5 @@
 import { createI18n } from 'vue-i18n'
+import { pluginMessages } from '@/pluginkit/registry'
 
 type LocaleCode = 'en' | 'zh'
 
@@ -50,6 +51,10 @@ export async function loadLocaleMessages(locale: LocaleCode): Promise<void> {
   const loader = localeLoaders[locale]
   const module = await loader()
   i18n.global.setLocaleMessage(locale, module.default)
+  // 插件文案在核心 locale 加载完成后 merge 到 plugins.<id>.* 命名空间。
+  // 每种语言仅 merge 一次（loadedLocales 缓存），运行时切换语言会先经
+  // loadLocaleMessages 加载目标语言，因此两种语言与切换场景均生效。
+  i18n.global.mergeLocaleMessage(locale, pluginMessages(locale))
   loadedLocales.add(locale)
 }
 

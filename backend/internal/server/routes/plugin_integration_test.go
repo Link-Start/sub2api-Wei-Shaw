@@ -172,3 +172,84 @@ func TestPluginRoutesUserDispatcher(t *testing.T) {
 	w := doPluginRequest(t, engine, http.MethodGet, "/api/v1/plugins/demo/api/hello")
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
+
+// fetchEnabledPluginIDs 请求用户态 enabled 清单端点并解出 data: string[]。
+func fetchEnabledPluginIDs(t *testing.T, engine *gin.Engine) []string {
+	t.Helper()
+	w := doPluginRequest(t, engine, http.MethodGet, "/api/v1/plugins")
+	require.Equal(t, http.StatusOK, w.Code)
+	var ids []string
+	decodePluginData(t, w.Body.Bytes(), &ids)
+	return ids
+}
+
+// TestPluginRoutesUserEnabledList 用户态 enabled 清单端点全链路：
+// 初始空数组（非 null）→ enable 后仅含 demo 且不泄露内部状态字段 → disable 后回到空。
+func TestPluginRoutesUserEnabledList(t *testing.T) {
+	engine, _, states := newPluginIntegrationRouter(t)
+	ctx := context.Background()
+
+	// 初始：demo 未启用 → 空数组
+	require.Equal(t, []string{}, fetchEnabledPluginIDs(t, engine))
+
+	// enable → 仅含 demo；载荷是纯 ID 列表，不泄露 state/error/started_at
+	require.NoError(t, states.SetEnabled(ctx, demo.PluginID, true, "test"))
+	require.Equal(t, []string{string(demo.PluginID)}, fetchEnabledPluginIDs(t, engine))
+	w := doPluginRequest(t, engine, http.MethodGet, "/api/v1/plugins")
+	require.NotContains(t, w.Body.String(), "state")
+	require.NotContains(t, w.Body.String(), "started_at")
+
+	// disable → 回到空数组
+	require.NoError(t, states.SetEnabled(ctx, demo.PluginID, false, "test"))
+	require.Equal(t, []string{}, fetchEnabledPluginIDs(t, engine))
+}
+
+// TestPluginRoutesUserEnabledListUnauthorized 未登录（JWT 中间件拒绝）→ 401：
+// 守护该端点必须挂在用户组认证中间件之后。
+func TestPluginRoutesUserEnabledListUnauthorized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	manager, states := newPluginRoutesManager(t)
+
+	engine := gin.New()
+	v1 := engine.Group("/api/v1")
+	reject := middleware.JWTAuthMiddleware(func(c *gin.Context) {
+		c.AbortWithStatus(http.StatusUnauthorized)
+	})
+	RegisterPluginRoutes(v1, reject, pluginTestAdminAuth(1), nil, manager, states)
+
+	w := doPluginRequest(t, engine, http.MethodGet, "/api/v1/plugins")
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// fakeListPlugin 只实现最小契约（ID），用于多插件场景的排序断言。
+type fakeListPlugin struct{ id pluginkit.ID }
+
+func (p fakeListPlugin) ID() pluginkit.ID { return p.id }
+
+// TestPluginRoutesUserEnabledListStableOrder 多插件时清单按 ID 稳定排序：
+// 注册顺序故意乱序，排序由 Manager.Snapshot 的 ID 稳定序保证，且多次请求结果一致。
+func TestPluginRoutesUserEnabledListStableOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	states := kittest.NewMemoryStateStore()
+	host := pluginkit.HostDeps{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	factories := []pluginkit.Factory{
+		func() pluginkit.Plugin { return fakeListPlugin{id: "zeta"} },
+		func() pluginkit.Plugin { return fakeListPlugin{id: "alpha"} },
+		func() pluginkit.Plugin { return fakeListPlugin{id: "midway"} },
+	}
+	manager, err := pluginkit.NewManager(host, states, nil, factories)
+	require.NoError(t, err)
+
+	engine := gin.New()
+	v1 := engine.Group("/api/v1")
+	RegisterPluginRoutes(v1, pluginTestJWTAuth(2), pluginTestAdminAuth(1), nil, manager, states)
+
+	ctx := context.Background()
+	for _, id := range []pluginkit.ID{"zeta", "alpha", "midway"} {
+		require.NoError(t, states.SetEnabled(ctx, id, true, "test"))
+	}
+
+	for i := 0; i < 3; i++ {
+		require.Equal(t, []string{"alpha", "midway", "zeta"}, fetchEnabledPluginIDs(t, engine), "第 %d 次请求", i+1)
+	}
+}

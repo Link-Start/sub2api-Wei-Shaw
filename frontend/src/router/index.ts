@@ -3,11 +3,19 @@
  * Defines all application routes with lazy loading and navigation guards
  */
 
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import {
+  createRouter,
+  createWebHistory,
+  type RouteLocationNormalized,
+  type RouteLocationRaw,
+  type RouteRecordRaw
+} from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import { useAdminComplianceStore } from '@/stores/adminCompliance'
+import { pluginRoutes } from '@/pluginkit/registry'
+import { useEnabledPluginsStore } from '@/pluginkit/enabled'
 import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
@@ -563,6 +571,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/plugins',
+    name: 'AdminPlugins',
+    component: () => import('@/views/admin/PluginsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Plugin Management',
+      titleKey: 'admin.plugins.title',
+      descriptionKey: 'admin.plugins.description'
+    }
+  },
+  {
     path: '/admin/risk-control',
     name: 'AdminRiskControl',
     component: () => import('@/views/admin/RiskControlView.vue'),
@@ -667,6 +687,11 @@ const routes: RouteRecordRaw[] = [
     }
   },
 
+  // ==================== Plugin Routes ====================
+  // 插件贡献的路由（meta.pluginId 已由 registry 自动补写；
+  // enabled 门控在下方 beforeEach 守卫内 fail-closed 执行）
+  ...pluginRoutes(),
+
   // ==================== 404 Not Found ====================
   {
     path: '/:pathMatch(.*)*',
@@ -731,6 +756,28 @@ function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: bo
   return false
 }
 
+/**
+ * 插件路由门控（fail-closed）：仅对带 meta.pluginId 的路由生效。
+ * enabled 清单未加载（loaded=false）或不含该插件 ID 时返回 NotFound 重定向
+ * （URL 保持不变），与后端分发器"未知 ID / 未启用同一个 404"语义对齐；
+ * 核心路由（无 pluginId）与已启用插件路由返回 null（放行）。
+ */
+function pluginGateRedirect(to: RouteLocationNormalized): RouteLocationRaw | null {
+  if (typeof to.meta.pluginId !== 'string' || to.meta.pluginId === '') {
+    return null
+  }
+  const enabledPluginsStore = useEnabledPluginsStore()
+  if (enabledPluginsStore.isEnabled(to.meta.pluginId)) {
+    return null
+  }
+  return {
+    name: 'NotFound',
+    params: { pathMatch: to.path.slice(1).split('/') },
+    query: to.query,
+    hash: to.hash
+  }
+}
+
 router.beforeEach(async (to, _from, next) => {
   // 开始导航加载状态
   navigationLoading.startNavigation()
@@ -770,6 +817,13 @@ router.beforeEach(async (to, _from, next) => {
 
   // If route doesn't require auth, allow access
   if (!requiresAuth) {
+    // 公开插件路由（requiresAuth:false）同样受 enabled 门控（fail-closed）：
+    // 未登录时 enabled 清单必然未加载，与直连未知 URL 的表现一致（无法探测启用状态）
+    const publicPluginRedirect = pluginGateRedirect(to)
+    if (publicPluginRedirect) {
+      next(publicPluginRedirect)
+      return
+    }
     // If already authenticated and trying to access login/register, redirect to appropriate dashboard
     if (authStore.isAuthenticated && (to.path === '/login' || to.path === '/register')) {
       // In backend mode, non-admin users should NOT be redirected away from login
@@ -808,6 +862,14 @@ router.beforeEach(async (to, _from, next) => {
   if (requiresAdmin && !authStore.isAdmin) {
     // User is authenticated but not admin, redirect to user dashboard
     next('/dashboard')
+    return
+  }
+
+  // 插件路由门控（fail-closed，实现见 pluginGateRedirect）：
+  // 放在登录/admin 判定之后——未登录用户先被重定向登录页，无法探测插件启用状态
+  const pluginRedirect = pluginGateRedirect(to)
+  if (pluginRedirect) {
+    next(pluginRedirect)
     return
   }
 

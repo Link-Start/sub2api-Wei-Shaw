@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -15,6 +16,7 @@ import (
 //	POST /api/v1/admin/plugins/:id/enable     免重启启用
 //	POST /api/v1/admin/plugins/:id/disable    免重启停用
 //	ANY  /api/v1/admin/plugins/:id/api/*path  admin 侧分发器（转发到插件私有子路由器）
+//	GET  /api/v1/plugins                      用户态 enabled 插件 ID 清单（前端门控用）
 //	ANY  /api/v1/plugins/:id/api/*path        user 侧分发器
 //
 // 插件 API 走 :id 分发器而非静态注册：鉴权中间件在宿主侧统一施加，
@@ -29,6 +31,7 @@ func RegisterPluginRoutes(
 	states pluginkit.StateStore,
 ) {
 	pluginHandler := admin.NewPluginHandler(manager, states)
+	enabledHandler := handler.NewPluginEnabledHandler(manager)
 
 	// 管理端点与 admin 侧分发器：AdminAuth + 合规守卫（对齐 RegisterAdminRoutes）
 	adminPlugins := v1.Group("/admin/plugins")
@@ -43,11 +46,12 @@ func RegisterPluginRoutes(
 		})
 	}
 
-	// user 侧分发器：JWT 认证 + 后台模式守卫（对齐 RegisterUserRoutes）
+	// user 侧端点与分发器：JWT 认证 + 后台模式守卫（对齐 RegisterUserRoutes）
 	userPlugins := v1.Group("/plugins")
 	userPlugins.Use(gin.HandlerFunc(jwtAuth))
 	userPlugins.Use(middleware.BackendModeUserGuard(settingService))
 	{
+		userPlugins.GET("", enabledHandler.ListEnabled)
 		userPlugins.Any("/:id/api/*path", func(c *gin.Context) {
 			manager.Dispatch(pluginkit.SideUser, c.Param("id"), c)
 		})
