@@ -1,4 +1,4 @@
-package service
+package moderation
 
 import (
 	"crypto/rand"

@@ -8,12 +8,12 @@ import (
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/plugins/moderation"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBuildContentModerationLogWhere_BlockedIncludesAllBlockActions(t *testing.T) {
-	where, args := buildContentModerationLogWhere(service.ContentModerationLogFilter{Result: "blocked"})
+	where, args := buildContentModerationLogWhere(moderation.ContentModerationLogFilter{Result: "blocked"})
 
 	require.Empty(t, args)
 	sql := strings.Join(where, " AND ")

@@ -631,10 +631,9 @@ var ProviderSet = wire.NewSet(
 	NewGroupCapacityService,
 	NewChannelService,
 	NewModelPricingResolver,
-	// 内容审计服务已整体迁移为 content-moderation 内建插件
-	// （internal/plugins/moderation）：实例由插件 Start 构造并绑定句柄，
-	// 不再经 Wire 直接构造。持有方注入下面的句柄。
-	NewContentModerationHandle,
+	// 内容审计已整体迁入 content-moderation 内建插件（internal/plugins/moderation，
+	// 含实现与 ContentModerationHandle）：实例由插件 Start 构造并绑定句柄，
+	// 句柄 provider 在 cmd/server/wire.go 装配。
 	NewAffiliateService,
 	ProvidePaymentConfigService,
 	ProvidePaymentService,

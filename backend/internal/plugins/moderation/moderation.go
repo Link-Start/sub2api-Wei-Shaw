@@ -2,9 +2,11 @@
 // 作为一个完整功能模块收编为内建插件（Phase-6 首个功能域竖切）。
 //
 // 竖切机制（区别于 jobs 包的单 worker 壳）：
-//   - 服务实现（审查/封号/异步 worker/清理）暂留 service 包，一行不改；
-//   - 热路径（7 个网关挂钩点）与 8 个 /admin/risk-control/* 端点经
-//     service.ContentModerationHandle（原子句柄）解析服务：插件 Start 时
+//   - 服务实现（审查/封号/异步 worker/清理/输入提取/邮件/脱敏）整体居于本包
+//     （content_moderation*.go，自 service 包纯移动搬入）；对 service 包的
+//     依赖只剩 ports/模型与 EmailService 导出出口，service 不反向 import 本包；
+//   - 热路径（网关挂钩点）与 8 个 /admin/risk-control/* 端点经
+//     ContentModerationHandle（原子句柄）解析服务：插件 Start 时
 //     Bind 新建实例、Stop 时 Unbind 并完全回收 worker——启用 = 迁移前行为，
 //     停用 = 热路径直通 + 后台端点 404 + worker 退出（功能整体熄灭）；
 //   - DefaultEnabled()=true：迁移前服务总是构造，迁移后必须默认启用以零行为变更；
@@ -26,14 +28,14 @@ const PluginID pluginkit.ID = "content-moderation"
 // Deps 是构造内容审计服务所需的全部依赖（由 Wire 装配注入闭包）。
 type Deps struct {
 	SettingRepo          service.SettingRepository
-	Repo                 service.ContentModerationRepository
-	HashCache            service.ContentModerationHashCache
+	Repo                 ContentModerationRepository
+	HashCache            ContentModerationHashCache
 	GroupRepo            service.GroupRepository
 	UserRepo             service.UserRepository
 	AuthCacheInvalidator service.APIKeyAuthCacheInvalidator
 	EmailService         *service.EmailService
 	// Handle 是热路径与后台 handler 持有的可切换引用，Start/Stop 时绑定/解绑。
-	Handle *service.ContentModerationHandle
+	Handle *ContentModerationHandle
 }
 
 // New 返回内容审计插件的工厂闭包（追加到 plugins.Builtin() 装配清单）。
@@ -45,7 +47,7 @@ func New(deps Deps) pluginkit.Factory {
 // 内层服务每轮 Start 重建，规避服务自身 stopOnce 不可重入。
 type Plugin struct {
 	deps Deps
-	svc  *service.ContentModerationService
+	svc  *ContentModerationService
 }
 
 var (
@@ -67,7 +69,7 @@ func (p *Plugin) Start(context.Context) error {
 	if p.svc != nil {
 		return errors.New("moderation: already started")
 	}
-	svc := service.NewContentModerationService(
+	svc := NewContentModerationService(
 		p.deps.SettingRepo,
 		p.deps.Repo,
 		p.deps.HashCache,

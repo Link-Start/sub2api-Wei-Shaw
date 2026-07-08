@@ -7,21 +7,21 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/plugins/moderation"
 	"github.com/gin-gonic/gin"
 )
 
 type ContentModerationHandler struct {
-	handle *service.ContentModerationHandle
+	handle *moderation.ContentModerationHandle
 }
 
-func NewContentModerationHandler(handle *service.ContentModerationHandle) *ContentModerationHandler {
+func NewContentModerationHandler(handle *moderation.ContentModerationHandle) *ContentModerationHandler {
 	return &ContentModerationHandler{handle: handle}
 }
 
 // resolveService 解析当前绑定的内容审计服务。content-moderation 插件停用时
 // 返回 nil 并写出 404（与插件分发器的熄灭语义一致：停用 = 功能不存在）。
-func (h *ContentModerationHandler) resolveService(c *gin.Context) *service.ContentModerationService {
+func (h *ContentModerationHandler) resolveService(c *gin.Context) *moderation.ContentModerationService {
 	svc := h.handle.Get()
 	if svc == nil {
 		response.NotFound(c, "content moderation plugin disabled")
@@ -54,15 +54,15 @@ type contentModerationConfigRequest struct {
 	BanThreshold         *int                `json:"ban_threshold"`
 	ViolationWindowHours *int                `json:"violation_window_hours"`
 	// cyber_policy 命中是否排除出自动封号计数；前端 RiskControlView 已发送该字段，
-	// service.UpdateContentModerationConfigInput 已支持，此前 handler 层缺透传导致开关静默失效。
-	CyberPolicyExcludeFromBanCount *bool                                 `json:"cyber_policy_exclude_from_ban_count"`
-	RetryCount                     *int                                  `json:"retry_count"`
-	HitRetentionDays               *int                                  `json:"hit_retention_days"`
-	NonHitRetentionDays            *int                                  `json:"non_hit_retention_days"`
-	PreHashCheckEnabled            *bool                                 `json:"pre_hash_check_enabled"`
-	BlockedKeywords                *[]string                             `json:"blocked_keywords"`
-	KeywordBlockingMode            *string                               `json:"keyword_blocking_mode"`
-	ModelFilter                    *service.ContentModerationModelFilter `json:"model_filter"`
+	// moderation.UpdateContentModerationConfigInput 已支持，此前 handler 层缺透传导致开关静默失效。
+	CyberPolicyExcludeFromBanCount *bool                                    `json:"cyber_policy_exclude_from_ban_count"`
+	RetryCount                     *int                                     `json:"retry_count"`
+	HitRetentionDays               *int                                     `json:"hit_retention_days"`
+	NonHitRetentionDays            *int                                     `json:"non_hit_retention_days"`
+	PreHashCheckEnabled            *bool                                    `json:"pre_hash_check_enabled"`
+	BlockedKeywords                *[]string                                `json:"blocked_keywords"`
+	KeywordBlockingMode            *string                                  `json:"keyword_blocking_mode"`
+	ModelFilter                    *moderation.ContentModerationModelFilter `json:"model_filter"`
 }
 
 type contentModerationAPIKeyTestRequest struct {
@@ -101,7 +101,7 @@ func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	cfg, err := svc.UpdateConfig(c.Request.Context(), service.UpdateContentModerationConfigInput{
+	cfg, err := svc.UpdateConfig(c.Request.Context(), moderation.UpdateContentModerationConfigInput{
 		Enabled:                        req.Enabled,
 		Mode:                           req.Mode,
 		BaseURL:                        req.BaseURL,
@@ -151,7 +151,7 @@ func (h *ContentModerationHandler) TestAPIKeys(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	result, err := svc.TestAPIKeys(c.Request.Context(), service.TestContentModerationAPIKeysInput{
+	result, err := svc.TestAPIKeys(c.Request.Context(), moderation.TestContentModerationAPIKeysInput{
 		APIKeys:   req.APIKeys,
 		BaseURL:   req.BaseURL,
 		Model:     req.Model,
@@ -185,7 +185,7 @@ func (h *ContentModerationHandler) ListLogs(c *gin.Context) {
 		return
 	}
 	page, pageSize := response.ParsePagination(c)
-	filter := service.ContentModerationLogFilter{
+	filter := moderation.ContentModerationLogFilter{
 		Pagination: pagination.PaginationParams{
 			Page:      page,
 			PageSize:  pageSize,

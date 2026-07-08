@@ -249,7 +249,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorRequestTemplateRepository := repository.NewChannelMonitorRequestTemplateRepository(client, db)
 	channelMonitorRequestTemplateService := service.NewChannelMonitorRequestTemplateService(channelMonitorRequestTemplateRepository)
 	channelMonitorRequestTemplateHandler := admin.NewChannelMonitorRequestTemplateHandler(channelMonitorRequestTemplateService)
-	contentModerationHandle := service.NewContentModerationHandle()
+	contentModerationHandle := moderation.NewContentModerationHandle()
 	contentModerationHandler := admin.NewContentModerationHandler(contentModerationHandle)
 	paymentHandler := admin.NewPaymentHandler(paymentService, paymentConfigService)
 	affiliateHandler := admin.NewAffiliateHandler(affiliateService, adminService)
@@ -358,13 +358,13 @@ func provideBuiltinFactories(
 	idempotencyRepo service.IdempotencyRepository,
 	cfg *config.Config,
 	settingRepo service.SettingRepository,
-	moderationRepo service.ContentModerationRepository,
-	moderationHashCache service.ContentModerationHashCache,
+	moderationRepo moderation.ContentModerationRepository,
+	moderationHashCache moderation.ContentModerationHashCache,
 	groupRepo service.GroupRepository,
 	userRepo service.UserRepository,
 	authCacheInvalidator service.APIKeyAuthCacheInvalidator,
 	emailService *service.EmailService,
-	moderationHandle *service.ContentModerationHandle,
+	moderationHandle *moderation.ContentModerationHandle,
 ) []pluginkit.Factory {
 	factories := append(plugins.Builtin(), jobs.Factories(jobs.JobDeps{
 		AccountRepo:     accountRepo,

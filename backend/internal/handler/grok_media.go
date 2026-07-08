@@ -11,6 +11,7 @@ import (
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/plugins/moderation"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -104,7 +105,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			return
 		}
 		if moderationBody := requestInfo.ModerationBody(); len(moderationBody) > 0 {
-			decision := h.checkContentModeration(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIImages, requestModel, moderationBody)
+			decision := h.checkContentModeration(c, reqLog, apiKey, subject, moderation.ContentModerationProtocolOpenAIImages, requestModel, moderationBody)
 			if decision != nil && decision.Blocked {
 				h.errorResponse(c, contentModerationStatus(decision), contentModerationErrorCode(decision), decision.Message)
 				return

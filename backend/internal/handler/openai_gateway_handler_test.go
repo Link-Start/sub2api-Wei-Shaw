@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/plugins/moderation"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
@@ -841,10 +842,10 @@ func (r *contentModerationHandlerSettingRepo) Delete(ctx context.Context, key st
 
 type contentModerationHandlerTestRepo struct {
 	mu   sync.Mutex
-	logs []service.ContentModerationLog
+	logs []moderation.ContentModerationLog
 }
 
-func (r *contentModerationHandlerTestRepo) CreateLog(ctx context.Context, log *service.ContentModerationLog) error {
+func (r *contentModerationHandlerTestRepo) CreateLog(ctx context.Context, log *moderation.ContentModerationLog) error {
 	if log != nil {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -859,13 +860,13 @@ func (r *contentModerationHandlerTestRepo) resetLogs() {
 	r.logs = nil
 }
 
-func (r *contentModerationHandlerTestRepo) logSnapshot() []service.ContentModerationLog {
+func (r *contentModerationHandlerTestRepo) logSnapshot() []moderation.ContentModerationLog {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]service.ContentModerationLog(nil), r.logs...)
+	return append([]moderation.ContentModerationLog(nil), r.logs...)
 }
 
-func (r *contentModerationHandlerTestRepo) ListLogs(ctx context.Context, filter service.ContentModerationLogFilter) ([]service.ContentModerationLog, *pagination.PaginationResult, error) {
+func (r *contentModerationHandlerTestRepo) ListLogs(ctx context.Context, filter moderation.ContentModerationLogFilter) ([]moderation.ContentModerationLog, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
 
@@ -873,8 +874,8 @@ func (r *contentModerationHandlerTestRepo) CountFlaggedByUserSince(ctx context.C
 	return 0, nil
 }
 
-func (r *contentModerationHandlerTestRepo) CleanupExpiredLogs(ctx context.Context, hitBefore time.Time, nonHitBefore time.Time) (*service.ContentModerationCleanupResult, error) {
-	return &service.ContentModerationCleanupResult{}, nil
+func (r *contentModerationHandlerTestRepo) CleanupExpiredLogs(ctx context.Context, hitBefore time.Time, nonHitBefore time.Time) (*moderation.ContentModerationCleanupResult, error) {
+	return &moderation.ContentModerationCleanupResult{}, nil
 }
 
 func (r *contentModerationHandlerTestRepo) UpdateLogEmailSent(ctx context.Context, id int64, sent bool) error {
@@ -890,9 +891,9 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 	}))
 	defer moderationServer.Close()
 
-	cfg := &service.ContentModerationConfig{
+	cfg := &moderation.ContentModerationConfig{
 		Enabled:      true,
-		Mode:         service.ContentModerationModePreBlock,
+		Mode:         moderation.ContentModerationModePreBlock,
 		BaseURL:      moderationServer.URL,
 		Model:        "omni-moderation-latest",
 		APIKeys:      []string{"sk-test"},
@@ -908,7 +909,7 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 		service.SettingKeyRiskControlEnabled:      "true",
 		service.SettingKeyContentModerationConfig: string(rawCfg),
 	}}
-	moderationSvc := service.NewContentModerationService(
+	moderationSvc := moderation.NewContentModerationService(
 		settingRepo,
 		repo,
 		nil,
@@ -917,12 +918,12 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 		nil,
 		nil,
 	)
-	decision, err := moderationSvc.Check(context.Background(), service.ContentModerationCheckInput{
+	decision, err := moderationSvc.Check(context.Background(), moderation.ContentModerationCheckInput{
 		UserID:   1,
 		Endpoint: "/v1/responses",
 		Provider: "openai",
 		Model:    "gpt-5.5",
-		Protocol: service.ContentModerationProtocolOpenAIResponses,
+		Protocol: moderation.ContentModerationProtocolOpenAIResponses,
 		Body:     []byte(`{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"bad prompt"}]}]}`),
 	})
 	require.NoError(t, err)
@@ -970,13 +971,13 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 		require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
 		require.Contains(t, closeErr.Reason, "内容审计测试阻断")
 	}
-	var logs []service.ContentModerationLog
+	var logs []moderation.ContentModerationLog
 	require.Eventually(t, func() bool {
 		logs = repo.logSnapshot()
 		return len(logs) == 1
 	}, time.Second, 10*time.Millisecond)
 	require.True(t, logs[0].Flagged)
-	require.Equal(t, service.ContentModerationActionBlock, logs[0].Action)
+	require.Equal(t, moderation.ContentModerationActionBlock, logs[0].Action)
 	require.Equal(t, "bad prompt", logs[0].InputExcerpt)
 }
 
@@ -1150,8 +1151,8 @@ func newOpenAIHandlerForPreviousResponseIDValidation(t *testing.T, cache *concur
 
 // moderationHandleFor 构造已绑定 svc 的句柄（handler 迁移为经
 // ContentModerationHandle 解析内容审计服务后，测试注入随之改走句柄）。
-func moderationHandleFor(svc *service.ContentModerationService) *service.ContentModerationHandle {
-	h := service.NewContentModerationHandle()
+func moderationHandleFor(svc *moderation.ContentModerationService) *moderation.ContentModerationHandle {
+	h := moderation.NewContentModerationHandle()
 	h.Bind(svc)
 	return h
 }

@@ -1,4 +1,4 @@
-package service
+package moderation
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,7 +69,7 @@ func TestRecordCyberPolicyEvent_DisabledWhenRiskControlOff(t *testing.T) {
 	repo := &contentModerationTestRepo{}
 	svc := NewContentModerationService(
 		&contentModerationTestSettingRepo{values: map[string]string{
-			SettingKeyRiskControlEnabled: "false",
+			service.SettingKeyRiskControlEnabled: "false",
 		}},
 		repo,
 		nil,
@@ -95,7 +96,7 @@ func TestRecordCyberPolicyEvent_WritesLogWhenEnabled(t *testing.T) {
 	repo := &contentModerationTestRepo{}
 	svc := NewContentModerationService(
 		&contentModerationTestSettingRepo{values: map[string]string{
-			SettingKeyRiskControlEnabled: "true",
+			service.SettingKeyRiskControlEnabled: "true",
 		}},
 		repo,
 		nil,
@@ -158,7 +159,7 @@ func TestRecordCyberPolicyEvent_WritesLogWhenEnabled(t *testing.T) {
 // log is persisted BEFORE email delivery, and EmailSent is patched afterwards —
 // SMTP hangs can no longer swallow the audit record.
 //
-// Note on email ordering: EmailService is a concrete type with no injectable
+// Note on email ordering: service.EmailService is a concrete type with no injectable
 // send interface, so SMTP-success cannot be simulated in unit tests.
 // With emailService=nil the email block is skipped and UpdateLogEmailSent is not
 // called (correct: logPersisted && emailSent guard). The test therefore asserts
@@ -172,7 +173,7 @@ func TestRecordCyberPolicyEvent_CreateLogBeforeEmail(t *testing.T) {
 	repo := &cyberOrderingTestRepo{}
 	svc := NewContentModerationService(
 		&contentModerationTestSettingRepo{values: map[string]string{
-			SettingKeyRiskControlEnabled: "true",
+			service.SettingKeyRiskControlEnabled: "true",
 		}},
 		repo,
 		nil,
@@ -252,8 +253,8 @@ func TestRecordCyberPolicyEvent_ExcludeFromBanCount_SkipsBanJudgment(t *testing.
 	repo := &banCountArgsTestRepo{}
 	svc := NewContentModerationService(
 		&contentModerationTestSettingRepo{values: map[string]string{
-			SettingKeyRiskControlEnabled:      "true",
-			SettingKeyContentModerationConfig: `{"cyber_policy_exclude_from_ban_count":true}`,
+			service.SettingKeyRiskControlEnabled:      "true",
+			service.SettingKeyContentModerationConfig: `{"cyber_policy_exclude_from_ban_count":true}`,
 		}},
 		repo, nil, nil, nil, nil, nil,
 	)
@@ -280,7 +281,7 @@ func TestRecordCyberPolicyEvent_DefaultCountsTowardBan(t *testing.T) {
 	repo := &banCountArgsTestRepo{}
 	svc := NewContentModerationService(
 		&contentModerationTestSettingRepo{values: map[string]string{
-			SettingKeyRiskControlEnabled: "true",
+			service.SettingKeyRiskControlEnabled: "true",
 		}},
 		repo, nil, nil, nil, nil, nil,
 	)

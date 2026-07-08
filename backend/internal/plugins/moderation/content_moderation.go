@@ -1,4 +1,4 @@
-package service
+package moderation
 
 import (
 	"bytes"
@@ -22,6 +22,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 const (
@@ -486,13 +487,13 @@ type ContentModerationHashCache interface {
 }
 
 type ContentModerationService struct {
-	settingRepo              SettingRepository
+	settingRepo              service.SettingRepository
 	repo                     ContentModerationRepository
 	hashCache                ContentModerationHashCache
-	groupRepo                GroupRepository
-	userRepo                 UserRepository
-	authCacheInvalidator     APIKeyAuthCacheInvalidator
-	emailService             *EmailService
+	groupRepo                service.GroupRepository
+	userRepo                 service.UserRepository
+	authCacheInvalidator     service.APIKeyAuthCacheInvalidator
+	emailService             *service.EmailService
 	httpClient               *http.Client
 	asyncQueue               chan contentModerationTask
 	workerCount              int
@@ -554,13 +555,13 @@ type contentModerationKeyHealth struct {
 }
 
 func NewContentModerationService(
-	settingRepo SettingRepository,
+	settingRepo service.SettingRepository,
 	repo ContentModerationRepository,
 	hashCache ContentModerationHashCache,
-	groupRepo GroupRepository,
-	userRepo UserRepository,
-	authCacheInvalidator APIKeyAuthCacheInvalidator,
-	emailService *EmailService,
+	groupRepo service.GroupRepository,
+	userRepo service.UserRepository,
+	authCacheInvalidator service.APIKeyAuthCacheInvalidator,
+	emailService *service.EmailService,
 ) *ContentModerationService {
 	baseCtx, baseCancel := context.WithCancel(context.Background())
 	svc := &ContentModerationService{
@@ -742,7 +743,7 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 	if err != nil {
 		return nil, fmt.Errorf("marshal content moderation config: %w", err)
 	}
-	if err := s.settingRepo.Set(ctx, SettingKeyContentModerationConfig, string(raw)); err != nil {
+	if err := s.settingRepo.Set(ctx, service.SettingKeyContentModerationConfig, string(raw)); err != nil {
 		return nil, fmt.Errorf("save content moderation config: %w", err)
 	}
 	return s.configView(cfg), nil
@@ -1326,13 +1327,13 @@ func (s *ContentModerationService) UnbanUser(ctx context.Context, userID int64) 
 	}
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, ErrUserNotFound) {
+		if errors.Is(err, service.ErrUserNotFound) {
 			return nil, infraerrors.NotFound("USER_NOT_FOUND", "用户不存在")
 		}
 		return nil, fmt.Errorf("get content moderation unban user: %w", err)
 	}
-	if user.Status != StatusActive {
-		user.Status = StatusActive
+	if user.Status != service.StatusActive {
+		user.Status = service.StatusActive
 		if err := s.userRepo.Update(ctx, user); err != nil {
 			return nil, fmt.Errorf("update content moderation unban user: %w", err)
 		}
@@ -1342,7 +1343,7 @@ func (s *ContentModerationService) UnbanUser(ctx context.Context, userID int64) 
 	}
 	return &ContentModerationUnbanUserResult{
 		UserID: userID,
-		Status: StatusActive,
+		Status: service.StatusActive,
 	}, nil
 }
 
@@ -1501,9 +1502,9 @@ func (s *ContentModerationService) runCleanupOnce() {
 
 func (s *ContentModerationService) loadConfig(ctx context.Context) (*ContentModerationConfig, error) {
 	cfg := defaultContentModerationConfig()
-	raw, err := s.settingRepo.GetValue(ctx, SettingKeyContentModerationConfig)
+	raw, err := s.settingRepo.GetValue(ctx, service.SettingKeyContentModerationConfig)
 	if err != nil {
-		if errors.Is(err, ErrSettingNotFound) {
+		if errors.Is(err, service.ErrSettingNotFound) {
 			cfg.normalize()
 			return cfg, nil
 		}
@@ -1521,7 +1522,7 @@ func (s *ContentModerationService) loadConfig(ctx context.Context) (*ContentMode
 }
 
 func (s *ContentModerationService) isRiskControlEnabled(ctx context.Context) bool {
-	raw, err := s.settingRepo.GetValue(ctx, SettingKeyRiskControlEnabled)
+	raw, err := s.settingRepo.GetValue(ctx, service.SettingKeyRiskControlEnabled)
 	if err != nil {
 		return false
 	}
@@ -1740,8 +1741,8 @@ func (s *ContentModerationService) applyFlaggedAccountSideEffects(ctx context.Co
 			// TODO: Disable the triggering API key instead when API key mutation is available here.
 			return false
 		}
-		if user.Status != StatusDisabled {
-			user.Status = StatusDisabled
+		if user.Status != service.StatusDisabled {
+			user.Status = service.StatusDisabled
 			if err := s.userRepo.Update(ctx, user); err != nil {
 				slog.Warn("content_moderation.ban_update_user_failed", "user_id", *log.UserID, "error", err)
 				return false
@@ -1783,52 +1784,32 @@ func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx contex
 
 func (s *ContentModerationService) sendViolationEmail(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog) error {
 	siteName := s.siteName(ctx)
-	if s.emailService.notificationEmailService != nil {
-		if err := s.emailService.notificationEmailService.Send(ctx, NotificationEmailSendInput{
-			Event:          NotificationEmailEventContentModerationViolation,
-			RecipientEmail: log.UserEmail,
-			RecipientName:  emailRecipientName(log.UserEmail),
-			UserID:         contentModerationEmailUserID(log),
-			SourceType:     "content_moderation",
-			SourceID:       contentModerationEmailSourceID(log),
-			Variables:      contentModerationEmailVariables(log, cfg),
-		}); err == nil {
-			return nil
-		} else {
-			if !shouldFallbackNotificationEmail(err) {
-				return err
-			}
-			slog.Warn("template content moderation violation email failed; falling back to built-in body", "log_id", log.ID, "recipient_hash", notificationEmailHash(log.UserEmail), "err", err.Error())
-		}
-	}
-	subject := fmt.Sprintf("[%s] 账户风控提醒 / Risk Control Notice", sanitizeEmailHeader(siteName))
-	body := buildContentModerationViolationEmailBody(siteName, log, cfg)
-	return s.emailService.SendEmail(ctx, log.UserEmail, subject, body)
+	return s.emailService.SendNotificationEmailWithFallback(ctx, service.NotificationEmailSendInput{
+		Event:          service.NotificationEmailEventContentModerationViolation,
+		RecipientEmail: log.UserEmail,
+		UserID:         contentModerationEmailUserID(log),
+		SourceType:     "content_moderation",
+		SourceID:       contentModerationEmailSourceID(log),
+		Variables:      contentModerationEmailVariables(log, cfg),
+	}, service.NotificationEmailFallback{
+		Subject: fmt.Sprintf("[%s] 账户风控提醒 / Risk Control Notice", service.SanitizeEmailHeader(siteName)),
+		Body:    buildContentModerationViolationEmailBody(siteName, log, cfg),
+	})
 }
 
 func (s *ContentModerationService) sendAccountDisabledEmail(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog) error {
 	siteName := s.siteName(ctx)
-	if s.emailService.notificationEmailService != nil {
-		if err := s.emailService.notificationEmailService.Send(ctx, NotificationEmailSendInput{
-			Event:          NotificationEmailEventContentModerationDisabled,
-			RecipientEmail: log.UserEmail,
-			RecipientName:  emailRecipientName(log.UserEmail),
-			UserID:         contentModerationEmailUserID(log),
-			SourceType:     "content_moderation",
-			SourceID:       contentModerationEmailSourceID(log),
-			Variables:      contentModerationEmailVariables(log, cfg),
-		}); err == nil {
-			return nil
-		} else {
-			if !shouldFallbackNotificationEmail(err) {
-				return err
-			}
-			slog.Warn("template content moderation disabled email failed; falling back to built-in body", "log_id", log.ID, "recipient_hash", notificationEmailHash(log.UserEmail), "err", err.Error())
-		}
-	}
-	subject := fmt.Sprintf("[%s] 账户已被禁用 / Account Disabled", sanitizeEmailHeader(siteName))
-	body := buildContentModerationAccountDisabledEmailBody(siteName, log, cfg)
-	return s.emailService.SendEmail(ctx, log.UserEmail, subject, body)
+	return s.emailService.SendNotificationEmailWithFallback(ctx, service.NotificationEmailSendInput{
+		Event:          service.NotificationEmailEventContentModerationDisabled,
+		RecipientEmail: log.UserEmail,
+		UserID:         contentModerationEmailUserID(log),
+		SourceType:     "content_moderation",
+		SourceID:       contentModerationEmailSourceID(log),
+		Variables:      contentModerationEmailVariables(log, cfg),
+	}, service.NotificationEmailFallback{
+		Subject: fmt.Sprintf("[%s] 账户已被禁用 / Account Disabled", service.SanitizeEmailHeader(siteName)),
+		Body:    buildContentModerationAccountDisabledEmailBody(siteName, log, cfg),
+	})
 }
 
 func contentModerationEmailUserID(log *ContentModerationLog) int64 {
@@ -1877,7 +1858,7 @@ func (s *ContentModerationService) siteName(ctx context.Context) string {
 	if s == nil || s.settingRepo == nil {
 		return "Sub2API"
 	}
-	name, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
+	name, err := s.settingRepo.GetValue(ctx, service.SettingKeySiteName)
 	if err != nil || strings.TrimSpace(name) == "" {
 		return "Sub2API"
 	}
@@ -2874,30 +2855,20 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 
 func (s *ContentModerationService) sendCyberPolicyEmail(ctx context.Context, log *ContentModerationLog) error {
 	siteName := s.siteName(ctx)
-	if s.emailService.notificationEmailService != nil {
-		variables := map[string]string{
+	return s.emailService.SendNotificationEmailWithFallback(ctx, service.NotificationEmailSendInput{
+		Event:          service.NotificationEmailEventCyberPolicyNotice,
+		RecipientEmail: log.UserEmail,
+		UserID:         contentModerationEmailUserID(log),
+		SourceType:     "content_moderation",
+		SourceID:       contentModerationEmailSourceID(log),
+		Variables: map[string]string{
 			"triggered_at":     log.CreatedAt.UTC().Format(time.RFC3339),
 			"model":            defaultContentModerationString(log.Model, "-"),
 			"group_name":       defaultContentModerationString(log.GroupName, "-"),
 			"upstream_message": defaultContentModerationString(log.Error, "-"),
-		}
-		err := s.emailService.notificationEmailService.Send(ctx, NotificationEmailSendInput{
-			Event:          NotificationEmailEventCyberPolicyNotice,
-			RecipientEmail: log.UserEmail,
-			RecipientName:  emailRecipientName(log.UserEmail),
-			UserID:         contentModerationEmailUserID(log),
-			SourceType:     "content_moderation",
-			SourceID:       contentModerationEmailSourceID(log),
-			Variables:      variables,
-		})
-		if err == nil {
-			return nil
-		}
-		if !shouldFallbackNotificationEmail(err) {
-			return err
-		}
-		slog.Warn("template cyber policy email failed; falling back", "err", err.Error())
-	}
-	subject := fmt.Sprintf("[%s] 网络安全策略拦截 / Cyber Policy Notice", sanitizeEmailHeader(siteName))
-	return s.emailService.SendEmail(ctx, log.UserEmail, subject, buildCyberPolicyNoticeEmailBody(siteName, log))
+		},
+	}, service.NotificationEmailFallback{
+		Subject: fmt.Sprintf("[%s] 网络安全策略拦截 / Cyber Policy Notice", service.SanitizeEmailHeader(siteName)),
+		Body:    buildCyberPolicyNoticeEmailBody(siteName, log),
+	})
 }

@@ -8,7 +8,7 @@
 //   - I-5.2 拦截错误码固定 content_policy_violation + 错误体组装
 //
 // 重要调研结论（不修，仅锁定现状）：
-// service.ContentModerationService.Check 在当前实现中【永不返回非 nil error】——
+// moderation.ContentModerationService.Check 在当前实现中【永不返回非 nil error】——
 // 全部 14 处 return 都是 (decision, nil)：配置加载失败、风控关闭、上游审核 API
 // 超时/5xx/连接失败等一律在 service 层被吞掉并返回 Allowed=true 的决策。
 // 因此 runContentModeration（content_moderation_helper.go:61-65）中
@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/plugins/moderation"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -36,11 +37,11 @@ import (
 // ContentModerationService（复用本包既有的 contentModerationHandlerSettingRepo /
 // contentModerationHandlerTestRepo 夹具，见 openai_gateway_handler_test.go）。
 // RetryCount 显式置 0（normalize 只钳负值），保证失败场景单次尝试、快速返回。
-func newModerationCharacterizationService(t *testing.T, baseURL string, blockStatus int, blockMessage string) (*service.ContentModerationService, *contentModerationHandlerTestRepo) {
+func newModerationCharacterizationService(t *testing.T, baseURL string, blockStatus int, blockMessage string) (*moderation.ContentModerationService, *contentModerationHandlerTestRepo) {
 	t.Helper()
-	cfg := &service.ContentModerationConfig{
+	cfg := &moderation.ContentModerationConfig{
 		Enabled:      true,
-		Mode:         service.ContentModerationModePreBlock,
+		Mode:         moderation.ContentModerationModePreBlock,
 		BaseURL:      baseURL,
 		Model:        "omni-moderation-latest",
 		APIKeys:      []string{"sk-moderation-characterization"},
@@ -54,7 +55,7 @@ func newModerationCharacterizationService(t *testing.T, baseURL string, blockSta
 	require.NoError(t, err)
 
 	repo := &contentModerationHandlerTestRepo{}
-	svc := service.NewContentModerationService(
+	svc := moderation.NewContentModerationService(
 		&contentModerationHandlerSettingRepo{values: map[string]string{
 			service.SettingKeyRiskControlEnabled:      "true",
 			service.SettingKeyContentModerationConfig: string(raw),
@@ -97,21 +98,21 @@ var moderationCharacterizationBody = []byte(`{"messages":[{"role":"user","conten
 func TestContentModerationStatusCharacterization_ClampsOutOfRangeTo403(t *testing.T) {
 	cases := []struct {
 		name     string
-		decision *service.ContentModerationDecision
+		decision *moderation.ContentModerationDecision
 		want     int
 	}{
-		{"nil_decision", nil, http.StatusForbidden},                                              // I-5.4
-		{"zero_status", &service.ContentModerationDecision{StatusCode: 0}, http.StatusForbidden}, // I-5.4
-		{"negative_status", &service.ContentModerationDecision{StatusCode: -1}, http.StatusForbidden},
-		{"status_200_below_range", &service.ContentModerationDecision{StatusCode: 200}, http.StatusForbidden},
-		{"status_399_boundary_below", &service.ContentModerationDecision{StatusCode: 399}, http.StatusForbidden},
-		{"status_400_lower_bound_passthrough", &service.ContentModerationDecision{StatusCode: 400}, 400},
-		{"status_403_passthrough", &service.ContentModerationDecision{StatusCode: 403}, 403},
-		{"status_429_passthrough", &service.ContentModerationDecision{StatusCode: 429}, 429},
-		{"status_451_passthrough", &service.ContentModerationDecision{StatusCode: 451}, 451},
-		{"status_599_upper_bound_passthrough", &service.ContentModerationDecision{StatusCode: 599}, 599},
-		{"status_600_boundary_above", &service.ContentModerationDecision{StatusCode: 600}, http.StatusForbidden},
-		{"status_1000_above_range", &service.ContentModerationDecision{StatusCode: 1000}, http.StatusForbidden},
+		{"nil_decision", nil, http.StatusForbidden},                                                 // I-5.4
+		{"zero_status", &moderation.ContentModerationDecision{StatusCode: 0}, http.StatusForbidden}, // I-5.4
+		{"negative_status", &moderation.ContentModerationDecision{StatusCode: -1}, http.StatusForbidden},
+		{"status_200_below_range", &moderation.ContentModerationDecision{StatusCode: 200}, http.StatusForbidden},
+		{"status_399_boundary_below", &moderation.ContentModerationDecision{StatusCode: 399}, http.StatusForbidden},
+		{"status_400_lower_bound_passthrough", &moderation.ContentModerationDecision{StatusCode: 400}, 400},
+		{"status_403_passthrough", &moderation.ContentModerationDecision{StatusCode: 403}, 403},
+		{"status_429_passthrough", &moderation.ContentModerationDecision{StatusCode: 429}, 429},
+		{"status_451_passthrough", &moderation.ContentModerationDecision{StatusCode: 451}, 451},
+		{"status_599_upper_bound_passthrough", &moderation.ContentModerationDecision{StatusCode: 599}, 599},
+		{"status_600_boundary_above", &moderation.ContentModerationDecision{StatusCode: 600}, http.StatusForbidden},
+		{"status_1000_above_range", &moderation.ContentModerationDecision{StatusCode: 1000}, http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,9 +123,9 @@ func TestContentModerationStatusCharacterization_ClampsOutOfRangeTo403(t *testin
 	// I-5.2 / I-5.4：错误码与 decision 内容无关，固定 content_policy_violation
 	//（content_moderation_helper.go:30）。
 	require.Equal(t, "content_policy_violation", contentModerationErrorCode(nil))
-	require.Equal(t, "content_policy_violation", contentModerationErrorCode(&service.ContentModerationDecision{
+	require.Equal(t, "content_policy_violation", contentModerationErrorCode(&moderation.ContentModerationDecision{
 		Blocked: true,
-		Action:  service.ContentModerationActionBlock,
+		Action:  moderation.ContentModerationActionBlock,
 	}))
 }
 
@@ -166,7 +167,7 @@ func TestRunContentModerationCharacterization_UpstreamFailureFailsOpen(t *testin
 				svc,
 				newModerationCharacterizationAPIKey(),
 				middleware2.AuthSubject{UserID: 11},
-				service.ContentModerationProtocolAnthropicMessages,
+				moderation.ContentModerationProtocolAnthropicMessages,
 				"claude-sonnet-4-5",
 				moderationCharacterizationBody,
 			)
@@ -176,7 +177,7 @@ func TestRunContentModerationCharacterization_UpstreamFailureFailsOpen(t *testin
 			require.NotNil(t, decision, "当前实现中 Check 吞掉上游错误并返回 allow 决策，helper 不应返回 nil")
 			require.True(t, decision.Allowed)
 			require.False(t, decision.Blocked)
-			require.Equal(t, service.ContentModerationActionAllow, decision.Action)
+			require.Equal(t, moderation.ContentModerationActionAllow, decision.Action)
 
 			// handler 门槛复刻（gateway_handler.go:200 等 9 处调用点的统一写法）：
 			// decision != nil && decision.Blocked 才拦截 → 此处必须放行。
@@ -208,13 +209,13 @@ func TestCheckContentModerationCharacterization_BlockedDecisionPropagates(t *tes
 	// anthropic 路径包装方法（GatewayHandler.checkContentModeration）
 	h := &GatewayHandler{contentModerationHandle: moderationHandleFor(svc)}
 	c := newModerationCharacterizationContext(t, moderationCharacterizationBody)
-	decision := h.checkContentModeration(c, zap.NewNop(), apiKey, subject, service.ContentModerationProtocolAnthropicMessages, "claude-sonnet-4-5", moderationCharacterizationBody)
+	decision := h.checkContentModeration(c, zap.NewNop(), apiKey, subject, moderation.ContentModerationProtocolAnthropicMessages, "claude-sonnet-4-5", moderationCharacterizationBody)
 
 	require.NotNil(t, decision)
 	require.True(t, decision.Blocked) // I-5.3 反向：命中必须拦截
 	require.False(t, decision.Allowed)
 	require.True(t, decision.Flagged)
-	require.Equal(t, service.ContentModerationActionBlock, decision.Action)
+	require.Equal(t, moderation.ContentModerationActionBlock, decision.Action)
 	require.Equal(t, http.StatusUnavailableForLegalReasons, decision.StatusCode) // 配置 BlockStatus 透传
 	require.Equal(t, blockMessage, decision.Message)                             // 配置 BlockMessage 透传
 
@@ -235,7 +236,7 @@ func TestCheckContentModerationCharacterization_BlockedDecisionPropagates(t *tes
 	// openai 兼容路径包装方法（OpenAIGatewayHandler.checkContentModeration）同样透出拦截决策。
 	oh := &OpenAIGatewayHandler{contentModerationHandle: moderationHandleFor(svc)}
 	c2 := newModerationCharacterizationContext(t, moderationCharacterizationBody)
-	decision2 := oh.checkContentModeration(c2, zap.NewNop(), apiKey, subject, service.ContentModerationProtocolOpenAIChat, "gpt-5.5", moderationCharacterizationBody)
+	decision2 := oh.checkContentModeration(c2, zap.NewNop(), apiKey, subject, moderation.ContentModerationProtocolOpenAIChat, "gpt-5.5", moderationCharacterizationBody)
 	require.NotNil(t, decision2)
 	require.True(t, decision2.Blocked)
 	require.Equal(t, http.StatusUnavailableForLegalReasons, decision2.StatusCode)
@@ -251,14 +252,14 @@ func TestCheckContentModerationCharacterization_BlockedDecisionPropagates(t *tes
 	)
 
 	// 拦截命中会异步落审计日志（enqueueRecord → worker），两次调用各一条。
-	var logs []service.ContentModerationLog
+	var logs []moderation.ContentModerationLog
 	require.Eventually(t, func() bool {
 		logs = repo.logSnapshot()
 		return len(logs) == 2
 	}, time.Second, 10*time.Millisecond)
 	for _, log := range logs {
 		require.True(t, log.Flagged)
-		require.Equal(t, service.ContentModerationActionBlock, log.Action)
+		require.Equal(t, moderation.ContentModerationActionBlock, log.Action)
 	}
 }
 
@@ -271,15 +272,15 @@ func TestCheckContentModerationCharacterization_NilServiceSkipsModeration(t *tes
 	subject := middleware2.AuthSubject{UserID: 11}
 
 	var nilGw *GatewayHandler
-	require.Nil(t, nilGw.checkContentModeration(c, zap.NewNop(), apiKey, subject, service.ContentModerationProtocolAnthropicMessages, "m", moderationCharacterizationBody))
-	require.Nil(t, (&GatewayHandler{}).checkContentModeration(c, zap.NewNop(), apiKey, subject, service.ContentModerationProtocolAnthropicMessages, "m", moderationCharacterizationBody))
+	require.Nil(t, nilGw.checkContentModeration(c, zap.NewNop(), apiKey, subject, moderation.ContentModerationProtocolAnthropicMessages, "m", moderationCharacterizationBody))
+	require.Nil(t, (&GatewayHandler{}).checkContentModeration(c, zap.NewNop(), apiKey, subject, moderation.ContentModerationProtocolAnthropicMessages, "m", moderationCharacterizationBody))
 
 	var nilOAI *OpenAIGatewayHandler
-	require.Nil(t, nilOAI.checkContentModeration(c, zap.NewNop(), apiKey, subject, service.ContentModerationProtocolOpenAIChat, "m", moderationCharacterizationBody))
-	require.Nil(t, (&OpenAIGatewayHandler{}).checkContentModeration(c, zap.NewNop(), apiKey, subject, service.ContentModerationProtocolOpenAIChat, "m", moderationCharacterizationBody))
+	require.Nil(t, nilOAI.checkContentModeration(c, zap.NewNop(), apiKey, subject, moderation.ContentModerationProtocolOpenAIChat, "m", moderationCharacterizationBody))
+	require.Nil(t, (&OpenAIGatewayHandler{}).checkContentModeration(c, zap.NewNop(), apiKey, subject, moderation.ContentModerationProtocolOpenAIChat, "m", moderationCharacterizationBody))
 
 	// runContentModeration 自身的入参守卫：svc/c/c.Request 任一为 nil → nil。
-	zeroSvc := &service.ContentModerationService{}
+	zeroSvc := &moderation.ContentModerationService{}
 	require.Nil(t, runContentModeration(nil, zap.NewNop(), zeroSvc, apiKey, subject, "p", "m", moderationCharacterizationBody))
 	noReqCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	require.Nil(t, runContentModeration(noReqCtx, zap.NewNop(), zeroSvc, apiKey, subject, "p", "m", moderationCharacterizationBody))
@@ -287,9 +288,9 @@ func TestCheckContentModerationCharacterization_NilServiceSkipsModeration(t *tes
 
 	// 零值 service（settingRepo/repo 为 nil）：Check 走 skip_unavailable 分支，
 	// 返回 Allowed=true 决策（放行），同样锁定为当前行为。
-	decision := runContentModeration(c, zap.NewNop(), zeroSvc, apiKey, subject, service.ContentModerationProtocolAnthropicMessages, "m", moderationCharacterizationBody)
+	decision := runContentModeration(c, zap.NewNop(), zeroSvc, apiKey, subject, moderation.ContentModerationProtocolAnthropicMessages, "m", moderationCharacterizationBody)
 	require.NotNil(t, decision)
 	require.True(t, decision.Allowed)
 	require.False(t, decision.Blocked)
-	require.Equal(t, service.ContentModerationActionAllow, decision.Action)
+	require.Equal(t, moderation.ContentModerationActionAllow, decision.Action)
 }

@@ -65,6 +65,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		// Plugin runtime (内建层插件内核)
 		providePluginHostDeps,
 		providePluginsConfig,
+		// 内容审计句柄：热路径/后台 handler 与 content-moderation 插件共享的
+		// 可切换引用（类型随搬家移入 moderation 包，provider 在此装配）。
+		moderation.NewContentModerationHandle,
 		provideBuiltinFactories,
 		providePluginManager,
 
@@ -105,13 +108,13 @@ func provideBuiltinFactories(
 	idempotencyRepo service.IdempotencyRepository,
 	cfg *config.Config,
 	settingRepo service.SettingRepository,
-	moderationRepo service.ContentModerationRepository,
-	moderationHashCache service.ContentModerationHashCache,
+	moderationRepo moderation.ContentModerationRepository,
+	moderationHashCache moderation.ContentModerationHashCache,
 	groupRepo service.GroupRepository,
 	userRepo service.UserRepository,
 	authCacheInvalidator service.APIKeyAuthCacheInvalidator,
 	emailService *service.EmailService,
-	moderationHandle *service.ContentModerationHandle,
+	moderationHandle *moderation.ContentModerationHandle,
 ) []pluginkit.Factory {
 	factories := append(plugins.Builtin(), jobs.Factories(jobs.JobDeps{
 		AccountRepo:     accountRepo,

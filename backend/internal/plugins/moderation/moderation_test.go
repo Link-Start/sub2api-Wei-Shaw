@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
-	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +17,7 @@ import (
 // （NewContentModerationService 对 nil settingRepo/repo 有守卫），
 // 此处只验证壳的生命周期与句柄语义；服务业务逻辑由其自身测试覆盖。
 func TestPlugin_Contract(t *testing.T) {
-	handle := service.NewContentModerationHandle()
+	handle := NewContentModerationHandle()
 	p := New(Deps{Handle: handle})()
 
 	require.NoError(t, p.ID().Validate())

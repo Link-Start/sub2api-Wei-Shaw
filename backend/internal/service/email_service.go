@@ -111,6 +111,47 @@ func (s *EmailService) SetNotificationEmailService(notificationEmailService *Not
 	s.notificationEmailService = notificationEmailService
 }
 
+// NotificationEmailFallback 是模板管线不可用或可回退失败时的内建邮件内容。
+type NotificationEmailFallback struct {
+	Subject string
+	Body    string
+}
+
+// SendNotificationEmailWithFallback 先尝试通知模板管线发送 input 描述的事件邮件；
+// 管线未装配或返回可回退错误（模板缺失/停用等）时，回退发送内建 Subject/Body。
+// 这是提供给跨包功能域插件（如 content-moderation）的稳定出口，封装
+// notificationEmailService / shouldFallbackNotificationEmail 等内部细节；
+// RecipientName 为空时默认取收件邮箱的本地部分（与包内既有调用点一致）。
+func (s *EmailService) SendNotificationEmailWithFallback(ctx context.Context, input NotificationEmailSendInput, fallback NotificationEmailFallback) error {
+	if s == nil {
+		return ErrEmailNotConfigured
+	}
+	if strings.TrimSpace(input.RecipientName) == "" {
+		input.RecipientName = emailRecipientName(input.RecipientEmail)
+	}
+	if s.notificationEmailService != nil {
+		err := s.notificationEmailService.Send(ctx, input)
+		if err == nil {
+			return nil
+		}
+		if !shouldFallbackNotificationEmail(err) {
+			return err
+		}
+		slog.Warn("template notification email failed; falling back to built-in body",
+			"event", input.Event,
+			"source_type", input.SourceType,
+			"source_id", input.SourceID,
+			"recipient_hash", notificationEmailHash(input.RecipientEmail),
+			"err", err.Error())
+	}
+	return s.SendEmail(ctx, input.RecipientEmail, fallback.Subject, fallback.Body)
+}
+
+// SanitizeEmailHeader 供跨包复用的邮件头净化出口（语义同包内 sanitizeEmailHeader）。
+func SanitizeEmailHeader(v string) string {
+	return sanitizeEmailHeader(v)
+}
+
 func firstEmailLocale(locales []string) string {
 	if len(locales) == 0 {
 		return ""

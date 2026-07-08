@@ -6,13 +6,14 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/plugins/moderation"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
-func (h *GatewayHandler) checkContentModeration(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *service.ContentModerationDecision {
+func (h *GatewayHandler) checkContentModeration(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *moderation.ContentModerationDecision {
 	if h == nil {
 		return nil
 	}
@@ -25,18 +26,18 @@ func (h *GatewayHandler) checkContentModeration(c *gin.Context, reqLog *zap.Logg
 	return runContentModeration(c, reqLog, svc, apiKey, subject, protocol, model, body)
 }
 
-func contentModerationStatus(decision *service.ContentModerationDecision) int {
+func contentModerationStatus(decision *moderation.ContentModerationDecision) int {
 	if decision == nil || decision.StatusCode < 400 || decision.StatusCode > 599 {
 		return http.StatusForbidden
 	}
 	return decision.StatusCode
 }
 
-func contentModerationErrorCode(decision *service.ContentModerationDecision) string {
+func contentModerationErrorCode(decision *moderation.ContentModerationDecision) string {
 	return "content_policy_violation"
 }
 
-func (h *OpenAIGatewayHandler) checkContentModeration(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *service.ContentModerationDecision {
+func (h *OpenAIGatewayHandler) checkContentModeration(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *moderation.ContentModerationDecision {
 	if h == nil {
 		return nil
 	}
@@ -47,7 +48,7 @@ func (h *OpenAIGatewayHandler) checkContentModeration(c *gin.Context, reqLog *za
 	return runContentModeration(c, reqLog, svc, apiKey, subject, protocol, model, body)
 }
 
-func runContentModeration(c *gin.Context, reqLog *zap.Logger, svc *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *service.ContentModerationDecision {
+func runContentModeration(c *gin.Context, reqLog *zap.Logger, svc *moderation.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *moderation.ContentModerationDecision {
 	if svc == nil || c == nil || c.Request == nil {
 		return nil
 	}
@@ -89,8 +90,8 @@ func runContentModeration(c *gin.Context, reqLog *zap.Logger, svc *service.Conte
 	return decision
 }
 
-func buildContentModerationInput(c *gin.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) service.ContentModerationCheckInput {
-	input := service.ContentModerationCheckInput{
+func buildContentModerationInput(c *gin.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) moderation.ContentModerationCheckInput {
+	input := moderation.ContentModerationCheckInput{
 		RequestID: contentModerationRequestID(c.Request.Context()),
 		UserID:    subject.UserID,
 		Endpoint:  GetInboundEndpoint(c),
