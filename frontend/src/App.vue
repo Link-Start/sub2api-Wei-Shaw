@@ -8,6 +8,7 @@ import { resolveRouteDocumentTitle } from '@/router/title'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { useEnabledPluginsStore } from '@/pluginkit/enabled'
+import { loadExternalPlugins } from '@/pluginkit/loader'
 import { getSetupStatus } from '@/api/setup'
 
 const router = useRouter()
@@ -121,6 +122,17 @@ watch(
     }
   },
   { immediate: true }
+)
+
+// 外部插件前端运行时：enabled 清单每次落盘（externalAssets 整体替换引用）后
+// 按最新映射对账加载/停用。fail-closed：拉取失败/登出会清空映射，
+// 已注册的运行时路由与导航贡献随之被移除。
+watch(
+  () => enabledPluginsStore.externalAssets,
+  (assets) => {
+    const list = Array.from(assets, ([id, assetsUrl]) => ({ id, assets: assetsUrl }))
+    void loadExternalPlugins(list)
+  }
 )
 
 // Route change trigger (throttled by store)

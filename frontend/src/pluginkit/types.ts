@@ -28,6 +28,10 @@ export interface PluginNavItem {
 
 /**
  * 插件描述符：一个前端插件的全部编译期贡献。
+ *
+ * 外部插件的运行时注册（window.__SUB2API_PLUGIN_REGISTER__）使用同一结构：
+ * 内建插件在编译期经 builtinPlugins 装配，外部插件在运行时经 registerRuntime
+ * 注册，二者贡献形态完全一致（路由 / 导航 / 文案）。
  */
 export interface PluginDescriptor {
   /** 插件 ID，必须与后端 pluginkit.ID 一致（前后端同一开关门控） */
@@ -40,6 +44,30 @@ export interface PluginDescriptor {
   userNav?: PluginNavItem[]
   /** 插件文案，聚合挂载到 plugins.<id>.* 命名空间（zh/en 键集必须一致） */
   i18n?: { zh: object; en: object }
+}
+
+/**
+ * GET /api/v1/plugins 的清单项契约（phase-4 决策 6）：
+ * 外部插件带前端资产时 assets 指向其运行时入口脚本
+ * （/api/v1/plugins/:id/assets/plugin.js）；内建插件无 assets 字段。
+ */
+export interface EnabledPluginEntry {
+  id: string
+  assets?: string
+}
+
+/** 外部插件脚本调用的运行时注册回调签名 */
+export type RegisterRuntimeFn = (descriptor: PluginDescriptor) => void
+
+declare global {
+  interface Window {
+    /**
+     * 外部插件前端半场的注册入口（由 pluginkit registry 挂载）。
+     * 插件 IIFE 脚本加载后调用它提交自己的 PluginDescriptor；
+     * 未经 loader 登记为期望 ID 的注册一律被拒绝（fail-closed）。
+     */
+    __SUB2API_PLUGIN_REGISTER__?: RegisterRuntimeFn
+  }
 }
 
 declare module 'vue-router' {

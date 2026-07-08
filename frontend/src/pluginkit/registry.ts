@@ -13,6 +13,7 @@
  * （由 pluginkit/__tests__ 守护测试锁定）。
  */
 
+import { shallowRef } from 'vue'
 import type { RouteRecordRaw } from 'vue-router'
 import type { PluginDescriptor, PluginNavItem } from './types'
 import { demoPlugin } from '@/plugins/demo'
@@ -49,6 +50,9 @@ function stampPluginId(route: RouteRecordRaw, pluginId: string): RouteRecordRaw 
 
 /**
  * 全部插件路由（meta.pluginId 已自动补写，供路由守卫做 enabled 门控）。
+ *
+ * 仅覆盖编译期装配的内建插件：外部插件的路由在运行时经 registerRuntime
+ * 走 router.addRoute 动态注入，不经过静态路由表。
  */
 export function pluginRoutes(): RouteRecordRaw[] {
   const routes: RouteRecordRaw[] = []
@@ -61,12 +65,13 @@ export function pluginRoutes(): RouteRecordRaw[] {
 }
 
 /**
- * 指定侧（admin/user）的插件导航项，仅包含 enabled 集合内的插件。
+ * 指定侧（admin/user）的插件导航项，仅包含 enabled 集合内的插件
+ * （内建清单 + 已激活的外部运行时插件）。
  * 按 order 升序（缺省 0），同权重保持清单注册顺序（Array.sort 稳定）。
  */
 export function pluginNav(side: 'admin' | 'user', enabled: ReadonlySet<string>): PluginNavItem[] {
   const items: PluginNavItem[] = []
-  for (const plugin of activePlugins) {
+  for (const plugin of [...activePlugins, ...activeRuntimePlugins.value]) {
     if (!enabled.has(plugin.id)) continue
     const nav = side === 'admin' ? plugin.adminNav : plugin.userNav
     if (nav) {
@@ -79,14 +84,186 @@ export function pluginNav(side: 'admin' | 'user', enabled: ReadonlySet<string>):
 /**
  * 指定语言的全部插件文案，聚合为 { plugins: { <id>: <messages> } }，
  * 由 i18n 接入点 mergeLocaleMessage 挂载到 plugins.<id>.* 命名空间。
+ *
+ * 含已激活的外部运行时插件：locale 懒加载晚于外部插件注册时（如注册后才
+ * 切换语言），setLocaleMessage 覆盖式写入后经本函数重新 merge 补回。
  */
 export function pluginMessages(locale: 'zh' | 'en'): Record<string, unknown> {
   const byId: Record<string, object> = {}
-  for (const plugin of activePlugins) {
+  for (const plugin of [...activePlugins, ...activeRuntimePlugins.value]) {
     const messages = plugin.i18n?.[locale]
     if (messages) {
       byId[plugin.id] = messages
     }
   }
   return { plugins: byId }
+}
+
+// ==================== 外部插件运行时注册 ====================
+
+/**
+ * 运行时宿主能力，由 loader 在注入外部插件脚本前绑定。
+ *
+ * registry 不直接 import @/router 与 @/i18n（避免把整棵应用模块图拖进
+ * 所有引用 registry 的接入点与测试），以最小接口注入所需能力。
+ */
+export interface RuntimeHost {
+  /** router.addRoute 的等价签名：注入一条顶级路由，返回该路由的移除函数 */
+  addRoute(route: RouteRecordRaw): () => void
+  /** i18n.global.mergeLocaleMessage 的等价签名 */
+  mergeLocaleMessage(locale: 'zh' | 'en', messages: Record<string, unknown>): void
+}
+
+interface RuntimeEntry {
+  descriptor: PluginDescriptor
+  /** 贡献是否已施加（路由已注入、导航/文案参与聚合） */
+  active: boolean
+  /** 激活期间持有的路由移除函数（stop 时逐一调用） */
+  removeRoutes: Array<() => void>
+}
+
+let runtimeHost: RuntimeHost | null = null
+
+// 已注册的外部插件描述符缓存（含已停用条目：脚本无法卸载，
+// 同一会话内重新启用时直接复活缓存，不重复注入脚本）
+const runtimeEntries = new Map<string, RuntimeEntry>()
+
+// 允许注册的外部插件 ID：loader 注入脚本前登记，registerRuntime 回调时核对。
+// 这是运行时注册的安全闸——任意脚本经 window 全局注册任意 ID 一律被拒。
+const expectedRuntimeIds = new Set<string>()
+
+// 已激活外部插件的响应式投影：pluginNav/pluginMessages 读取它，
+// AppSidebar 的计算属性与 locale 懒加载 merge 由此感知运行时增删
+const activeRuntimePlugins = shallowRef<readonly PluginDescriptor[]>([])
+
+function recomputeActiveRuntimePlugins(): void {
+  const actives: PluginDescriptor[] = []
+  for (const entry of runtimeEntries.values()) {
+    if (entry.active) {
+      actives.push(entry.descriptor)
+    }
+  }
+  activeRuntimePlugins.value = actives
+}
+
+/** 绑定运行时宿主能力（loader 首次加载外部插件前调用；重复绑定以最新为准） */
+export function setRuntimeHost(host: RuntimeHost): void {
+  runtimeHost = host
+}
+
+/** loader 注入插件脚本前登记期望 ID：仅登记过的 ID 允许经 registerRuntime 注册 */
+export function expectRuntimePlugin(id: string): void {
+  expectedRuntimeIds.add(id)
+}
+
+function activateEntry(id: string, entry: RuntimeEntry): void {
+  if (entry.active || runtimeHost === null) {
+    return
+  }
+  for (const route of entry.descriptor.routes ?? []) {
+    entry.removeRoutes.push(runtimeHost.addRoute(stampPluginId(route, id)))
+  }
+  entry.active = true
+  recomputeActiveRuntimePlugins()
+}
+
+function deactivateEntry(entry: RuntimeEntry): void {
+  if (!entry.active) {
+    return
+  }
+  for (const removeRoute of entry.removeRoutes) {
+    removeRoute()
+  }
+  entry.removeRoutes = []
+  entry.active = false
+  recomputeActiveRuntimePlugins()
+}
+
+/**
+ * 外部插件的运行时注册回调（挂载为 window.__SUB2API_PLUGIN_REGISTER__）。
+ *
+ * fail-closed：descriptor 非法 / ID 未在期望集合内 / 宿主未绑定，一律
+ * console.warn 后忽略（不抛错，插件脚本的失败不得中断核心应用）；
+ * 同 ID 重复注册幂等（首次注册生效，后续调用为 no-op）。
+ *
+ * 路由 meta.pluginId 复用 stampPluginId 强制覆写为 descriptor.id，
+ * 与内建插件同一套"归属不可伪造"语义，守卫门控照常生效。
+ */
+export function registerRuntime(descriptor: PluginDescriptor): void {
+  if (!descriptor || typeof descriptor.id !== 'string' || descriptor.id === '') {
+    console.warn('[pluginkit] registerRuntime: invalid plugin descriptor, ignored')
+    return
+  }
+  const id = descriptor.id
+  if (!expectedRuntimeIds.has(id)) {
+    console.warn(`[pluginkit] registerRuntime: "${id}" is not an expected external plugin, ignored`)
+    return
+  }
+  // 绑定注册到当前执行的注入脚本：loader 给每个 <script> 打了 data-plugin-id，
+  // IIFE 同步执行期间 document.currentScript 即该脚本。这样插件 A 的脚本无法
+  // 冒用插件 B 的 ID 抢注（防跨插件搭车）。currentScript 为空（非脚本注入
+  // 路径，如测试直接调用）时跳过该校验，由 expectedRuntimeIds 兜底。
+  const injectingId = (document.currentScript as HTMLScriptElement | null)?.dataset?.pluginId
+  if (injectingId !== undefined && injectingId !== id) {
+    console.warn(`[pluginkit] registerRuntime: script for "${injectingId}" tried to register "${id}", ignored`)
+    return
+  }
+  if (runtimeHost === null) {
+    console.warn(`[pluginkit] registerRuntime: runtime host not bound, "${id}" ignored`)
+    return
+  }
+  if (runtimeEntries.has(id)) {
+    return
+  }
+  const entry: RuntimeEntry = { descriptor, active: false, removeRoutes: [] }
+  runtimeEntries.set(id, entry)
+  activateEntry(id, entry)
+  // 文案对两种语言各 merge 一次立即生效；此后的 locale 懒加载路径会经
+  // pluginMessages()（含运行时插件）覆盖式补回，两条路径收敛到同一结果。
+  // 停用时不反向卸载文案（vue-i18n 无 unmerge），残留键无导航/路由可达，无害。
+  if (descriptor.i18n) {
+    for (const locale of ['zh', 'en'] as const) {
+      runtimeHost.mergeLocaleMessage(locale, { plugins: { [id]: descriptor.i18n[locale] } })
+    }
+  }
+}
+
+/**
+ * 按最新的"enabled 且带前端资产"的外部插件 ID 集合对账运行时激活状态
+ * （loader 在每次 enabled 清单落盘后调用）：
+ *   - 集合外：移除路由与导航贡献（描述符保留缓存），并撤销注册期望
+ *     （在途脚本晚到的注册将被拒绝，fail-closed）；
+ *   - 集合内的缓存条目：重新激活（脚本已加载过，无需重新注入）。
+ */
+export function syncRuntimeActivation(enabledIds: ReadonlySet<string>): void {
+  for (const id of [...expectedRuntimeIds]) {
+    if (!enabledIds.has(id)) {
+      expectedRuntimeIds.delete(id)
+    }
+  }
+  for (const [id, entry] of runtimeEntries) {
+    if (enabledIds.has(id)) {
+      activateEntry(id, entry)
+    } else {
+      deactivateEntry(entry)
+    }
+  }
+}
+
+/** 仅测试使用：清空全部运行时注册状态（宿主绑定/条目缓存/期望集合） */
+export function _resetRuntimeForTest(): void {
+  for (const entry of runtimeEntries.values()) {
+    deactivateEntry(entry)
+  }
+  runtimeEntries.clear()
+  expectedRuntimeIds.clear()
+  runtimeHost = null
+  activeRuntimePlugins.value = []
+}
+
+// 全局注册入口：外部插件 IIFE 脚本经它提交描述符。模块求值即挂载
+// （任何接入点 import registry 都会就位）；期望集合为空时一切注册被拒，
+// 未安装外部插件时该全局的存在不产生任何行为变更。
+if (typeof window !== 'undefined') {
+  window.__SUB2API_PLUGIN_REGISTER__ = registerRuntime
 }
