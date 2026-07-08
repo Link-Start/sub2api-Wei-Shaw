@@ -113,6 +113,13 @@ deploy/config.yaml
 backend/.installed
 
 # ===================
+# 本地项目管理与基准工件（不入库）
+# ===================
+issues/
+backend/testdata/bench/
+backend/scripts/bench-compare.sh
+
+# ===================
 # 其他
 # ===================
 tests
@@ -135,8 +142,6 @@ docs/*
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/legal/
 !docs/legal/*.md
-!docs/plugin-architecture/
-!docs/plugin-architecture/*.md
 .serena/
 .codex/
 frontend/coverage/
