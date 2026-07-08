@@ -1136,7 +1136,7 @@ import type {
   KeywordBlockingMode,
   ModerationMode,
   UpdateContentModerationConfig,
-} from '@/api/admin/riskControl'
+} from './api'
 import type { AdminGroup, SelectOption } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
