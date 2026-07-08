@@ -592,7 +592,12 @@ const routes: RouteRecordRaw[] = [
       title: 'Risk Control',
       titleKey: 'admin.riskControl.title',
       descriptionKey: 'admin.riskControl.description',
-      requiresRiskControl: true
+      requiresRiskControl: true,
+      // 内容审计已收编为 content-moderation 内建插件（后端整体启停）：
+      // 静态路由手写 pluginId 接入插件守卫门控——插件停用时本页与后端
+      // /admin/risk-control/* API 一致熄灭（NotFound）。路径、组件位置与
+      // 原 requiresRiskControl 总开关语义均保持不变（迁移期等价）。
+      pluginId: 'content-moderation'
     }
   },
   {
@@ -867,6 +872,15 @@ router.beforeEach(async (to, _from, next) => {
 
   // 插件路由门控（fail-closed，实现见 pluginGateRedirect）：
   // 放在登录/admin 判定之后——未登录用户先被重定向登录页，无法探测插件启用状态
+  if (typeof to.meta.pluginId === 'string' && to.meta.pluginId !== '') {
+    const enabledPluginsStore = useEnabledPluginsStore()
+    if (!enabledPluginsStore.loaded) {
+      // 硬刷新直达插件路由时，App.vue 的异步预拉取可能尚未完成：先等一次
+      // 清单拉取再判定，避免已启用插件被 fail-closed 误判 404
+      //（拉取失败时 loaded 保持 false，仍按熄灭处理）。
+      await enabledPluginsStore.fetchEnabled()
+    }
+  }
   const pluginRedirect = pluginGateRedirect(to)
   if (pluginRedirect) {
     next(pluginRedirect)

@@ -102,14 +102,23 @@ const CORE_ROUTE_SIGNATURES = [
   'dingtalk-email-completion:/auth/dingtalk/email-completion'
 ]
 
+/**
+ * 已收编为插件的核心路由（"name:pluginId"）：这些路由留在静态路由表原位
+ * （路径/组件/菜单位置不变），但手写 meta.pluginId 接入插件守卫门控——
+ * 对应后端功能整体迁移为内建插件（Phase-6 功能域竖切）。
+ * ⚠️ 新增此类路由必须在此显式登记，且后端必须存在同 ID 的内建插件。
+ */
+const PLUGIN_GATED_CORE_ROUTES = ['AdminRiskControl:content-moderation']
+
 describe('router 路由名单（插件系统守护）', () => {
-  it('清单清空 → 路由名单与核心基线逐条一致，且无任何 meta.pluginId', async () => {
+  it('清单清空 → 路由名单与核心基线逐条一致，meta.pluginId 仅限已登记的收编路由', async () => {
     const router = await importRouterWithPlugins('empty')
 
     expect(routeSignatures(router)).toEqual(CORE_ROUTE_SIGNATURES)
-    for (const route of router.getRoutes()) {
-      expect(route.meta.pluginId).toBeUndefined()
-    }
+    const pluginGated = router.getRoutes().filter((route) => route.meta.pluginId !== undefined)
+    expect(
+      pluginGated.map((route) => `${String(route.name)}:${route.meta.pluginId}`).sort()
+    ).toEqual(PLUGIN_GATED_CORE_ROUTES)
   })
 
   it('默认清单 → 相对基线的增量恰为 demo 插件路由一条（带 meta.pluginId）', async () => {
@@ -123,8 +132,8 @@ describe('router 路由名单（插件系统守护）', () => {
     )
 
     const pluginGated = router.getRoutes().filter((route) => route.meta.pluginId !== undefined)
-    expect(pluginGated.map((route) => `${String(route.name)}:${route.meta.pluginId}`)).toEqual([
-      'PluginDemo:demo'
-    ])
+    expect(
+      pluginGated.map((route) => `${String(route.name)}:${route.meta.pluginId}`).sort()
+    ).toEqual([...PLUGIN_GATED_CORE_ROUTES, 'PluginDemo:demo'].sort())
   })
 })
