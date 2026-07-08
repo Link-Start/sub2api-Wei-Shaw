@@ -206,7 +206,7 @@ func TestCheckContentModerationCharacterization_BlockedDecisionPropagates(t *tes
 	subject := middleware2.AuthSubject{UserID: 11}
 
 	// anthropic 路径包装方法（GatewayHandler.checkContentModeration）
-	h := &GatewayHandler{contentModerationService: svc}
+	h := &GatewayHandler{contentModerationHandle: moderationHandleFor(svc)}
 	c := newModerationCharacterizationContext(t, moderationCharacterizationBody)
 	decision := h.checkContentModeration(c, zap.NewNop(), apiKey, subject, service.ContentModerationProtocolAnthropicMessages, "claude-sonnet-4-5", moderationCharacterizationBody)
 
@@ -233,7 +233,7 @@ func TestCheckContentModerationCharacterization_BlockedDecisionPropagates(t *tes
 	)
 
 	// openai 兼容路径包装方法（OpenAIGatewayHandler.checkContentModeration）同样透出拦截决策。
-	oh := &OpenAIGatewayHandler{contentModerationService: svc}
+	oh := &OpenAIGatewayHandler{contentModerationHandle: moderationHandleFor(svc)}
 	c2 := newModerationCharacterizationContext(t, moderationCharacterizationBody)
 	decision2 := oh.checkContentModeration(c2, zap.NewNop(), apiKey, subject, service.ContentModerationProtocolOpenAIChat, "gpt-5.5", moderationCharacterizationBody)
 	require.NotNil(t, decision2)

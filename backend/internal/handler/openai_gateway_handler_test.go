@@ -932,11 +932,11 @@ func TestOpenAIResponsesWebSocket_ContentModerationBlocksFirstFrame(t *testing.T
 	}, time.Second, 10*time.Millisecond)
 	repo.resetLogs()
 	h := &OpenAIGatewayHandler{
-		gatewayService:           &service.OpenAIGatewayService{},
-		billingCacheService:      &service.BillingCacheService{},
-		apiKeyService:            &service.APIKeyService{},
-		contentModerationService: moderationSvc,
-		concurrencyHelper:        NewConcurrencyHelper(service.NewConcurrencyService(&concurrencyCacheMock{}), SSEPingFormatNone, time.Second),
+		gatewayService:          &service.OpenAIGatewayService{},
+		billingCacheService:     &service.BillingCacheService{},
+		apiKeyService:           &service.APIKeyService{},
+		contentModerationHandle: moderationHandleFor(moderationSvc),
+		concurrencyHelper:       NewConcurrencyHelper(service.NewConcurrencyService(&concurrencyCacheMock{}), SSEPingFormatNone, time.Second),
 	}
 	wsServer := newOpenAIWSHandlerTestServer(t, h, middleware.AuthSubject{UserID: 1, Concurrency: 1})
 	defer wsServer.Close()
@@ -1146,6 +1146,14 @@ func newOpenAIHandlerForPreviousResponseIDValidation(t *testing.T, cache *concur
 		apiKeyService:       &service.APIKeyService{},
 		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 	}
+}
+
+// moderationHandleFor 构造已绑定 svc 的句柄（handler 迁移为经
+// ContentModerationHandle 解析内容审计服务后，测试注入随之改走句柄）。
+func moderationHandleFor(svc *service.ContentModerationService) *service.ContentModerationHandle {
+	h := service.NewContentModerationHandle()
+	h.Bind(svc)
+	return h
 }
 
 func newOpenAIWSHandlerTestServer(t *testing.T, h *OpenAIGatewayHandler, subject middleware.AuthSubject) *httptest.Server {

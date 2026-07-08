@@ -13,10 +13,16 @@ import (
 )
 
 func (h *GatewayHandler) checkContentModeration(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *service.ContentModerationDecision {
-	if h == nil || h.contentModerationService == nil {
+	if h == nil {
 		return nil
 	}
-	return runContentModeration(c, reqLog, h.contentModerationService, apiKey, subject, protocol, model, body)
+	// 每请求解析句柄：content-moderation 插件停用时 Get() 为 nil → 直通，
+	// 与迁移前"服务不存在"同语义。
+	svc := h.contentModerationHandle.Get()
+	if svc == nil {
+		return nil
+	}
+	return runContentModeration(c, reqLog, svc, apiKey, subject, protocol, model, body)
 }
 
 func contentModerationStatus(decision *service.ContentModerationDecision) int {
@@ -31,10 +37,14 @@ func contentModerationErrorCode(decision *service.ContentModerationDecision) str
 }
 
 func (h *OpenAIGatewayHandler) checkContentModeration(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *service.ContentModerationDecision {
-	if h == nil || h.contentModerationService == nil {
+	if h == nil {
 		return nil
 	}
-	return runContentModeration(c, reqLog, h.contentModerationService, apiKey, subject, protocol, model, body)
+	svc := h.contentModerationHandle.Get()
+	if svc == nil {
+		return nil
+	}
+	return runContentModeration(c, reqLog, svc, apiKey, subject, protocol, model, body)
 }
 
 func runContentModeration(c *gin.Context, reqLog *zap.Logger, svc *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *service.ContentModerationDecision {

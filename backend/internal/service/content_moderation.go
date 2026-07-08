@@ -513,6 +513,15 @@ type ContentModerationService struct {
 	lastCleanupDeletedNonHit atomic.Int64
 	keyHealthMu              sync.Mutex
 	keyHealth                map[string]*contentModerationKeyHealth
+
+	// 生命周期（content-moderation 插件启停需要完全回收 worker）：
+	// stopCh 关闭 = 停止信号；baseCtx 随 Stop 取消，中止 worker 在途外呼；
+	// wg 计数全部后台 goroutine，Stop 据此等待退出。
+	stopCh     chan struct{}
+	stopOnce   sync.Once
+	wg         sync.WaitGroup
+	baseCtx    context.Context
+	baseCancel context.CancelFunc
 }
 
 type contentModerationTask struct {
@@ -553,6 +562,7 @@ func NewContentModerationService(
 	authCacheInvalidator APIKeyAuthCacheInvalidator,
 	emailService *EmailService,
 ) *ContentModerationService {
+	baseCtx, baseCancel := context.WithCancel(context.Background())
 	svc := &ContentModerationService{
 		settingRepo:          settingRepo,
 		repo:                 repo,
@@ -565,14 +575,50 @@ func NewContentModerationService(
 		workerCount:          maxContentModerationWorkerCount,
 		asyncQueue:           make(chan contentModerationTask, maxContentModerationQueueSize),
 		keyHealth:            make(map[string]*contentModerationKeyHealth),
+		stopCh:               make(chan struct{}),
+		baseCtx:              baseCtx,
+		baseCancel:           baseCancel,
 	}
 	if settingRepo != nil && repo != nil {
+		svc.wg.Add(svc.workerCount + 1)
 		for i := 0; i < svc.workerCount; i++ {
-			go svc.worker(i)
+			go func(id int) {
+				defer svc.wg.Done()
+				svc.worker(id)
+			}(i)
 		}
-		go svc.cleanupWorker()
+		go func() {
+			defer svc.wg.Done()
+			svc.cleanupWorker()
+		}()
 	}
 	return svc
+}
+
+// Stop 发出停止信号、中止在途任务上下文，并等待全部后台 worker 退出
+// （受 ctx 限时）。由 content-moderation 插件在停用时调用；幂等。
+// 停止后实例不可复用（插件每次 Start 新建实例）。
+func (s *ContentModerationService) Stop(ctx context.Context) error {
+	if s == nil || s.stopCh == nil {
+		return nil
+	}
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+		if s.baseCancel != nil {
+			s.baseCancel()
+		}
+	})
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("content moderation: waiting for workers to exit: %w", ctx.Err())
+	}
 }
 
 func (s *ContentModerationService) GetConfig(ctx context.Context) (*ContentModerationConfigView, error) {
@@ -1176,11 +1222,20 @@ func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInp
 
 func (s *ContentModerationService) worker(id int) {
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), maxContentModerationTimeoutMS*time.Millisecond+10*time.Second)
+		select {
+		case <-s.stopCh:
+			return
+		default:
+		}
+		ctx, cancel := context.WithTimeout(s.baseCtx, maxContentModerationTimeoutMS*time.Millisecond+10*time.Second)
 		cfg, err := s.loadConfig(ctx)
 		if err != nil || id >= cfg.WorkerCount {
 			cancel()
-			time.Sleep(time.Second)
+			select {
+			case <-s.stopCh:
+				return
+			case <-time.After(time.Second):
+			}
 			continue
 		}
 		task, ok := s.dequeueAsyncTask(ctx, time.Second)
@@ -1403,7 +1458,11 @@ func (s *ContentModerationService) cleanupWorker() {
 	timer := time.NewTimer(contentModerationCleanupDelay)
 	defer timer.Stop()
 	for {
-		<-timer.C
+		select {
+		case <-s.stopCh:
+			return
+		case <-timer.C:
+		}
 		s.runCleanupOnce()
 		timer.Reset(contentModerationCleanupInterval)
 	}
@@ -1413,7 +1472,11 @@ func (s *ContentModerationService) runCleanupOnce() {
 	if s == nil || s.repo == nil || s.settingRepo == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), contentModerationCleanupTimeout)
+	parent := s.baseCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, contentModerationCleanupTimeout)
 	defer cancel()
 	cfg, err := s.loadConfig(ctx)
 	if err != nil {

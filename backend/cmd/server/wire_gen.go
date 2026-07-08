@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 	"github.com/Wei-Shaw/sub2api/internal/plugins"
 	"github.com/Wei-Shaw/sub2api/internal/plugins/jobs"
+	"github.com/Wei-Shaw/sub2api/internal/plugins/moderation"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -248,10 +249,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorRequestTemplateRepository := repository.NewChannelMonitorRequestTemplateRepository(client, db)
 	channelMonitorRequestTemplateService := service.NewChannelMonitorRequestTemplateService(channelMonitorRequestTemplateRepository)
 	channelMonitorRequestTemplateHandler := admin.NewChannelMonitorRequestTemplateHandler(channelMonitorRequestTemplateService)
-	contentModerationRepository := repository.NewContentModerationRepository(db)
-	contentModerationHashCache := repository.NewContentModerationHashCache(redisClient)
-	contentModerationService := service.NewContentModerationService(settingRepository, contentModerationRepository, contentModerationHashCache, groupRepository, userRepository, apiKeyAuthCacheInvalidator, emailService)
-	contentModerationHandler := admin.NewContentModerationHandler(contentModerationService)
+	contentModerationHandle := service.NewContentModerationHandle()
+	contentModerationHandler := admin.NewContentModerationHandler(contentModerationHandle)
 	paymentHandler := admin.NewPaymentHandler(paymentService, paymentConfigService)
 	affiliateHandler := admin.NewAffiliateHandler(affiliateService, adminService)
 	complianceHandler := admin.NewComplianceHandler(settingService)
@@ -259,8 +258,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	usageRecordWorkerPool := service.NewUsageRecordWorkerPool(configConfig)
 	userMsgQueueCache := repository.NewUserMsgQueueCache(redisClient)
 	userMessageQueueService := service.ProvideUserMessageQueueService(userMsgQueueCache, rpmCache, configConfig)
-	gatewayHandler := handler.NewGatewayHandler(gatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, userMessageQueueService, configConfig, settingService)
-	openAIGatewayHandler := handler.NewOpenAIGatewayHandler(openAIGatewayService, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, configConfig)
+	gatewayHandler := handler.NewGatewayHandler(gatewayService, geminiMessagesCompatService, antigravityGatewayService, userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationHandle, userMessageQueueService, configConfig, settingService)
+	openAIGatewayHandler := handler.NewOpenAIGatewayHandler(openAIGatewayService, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationHandle, opsService, configConfig)
 	handlerSettingHandler := handler.ProvideSettingHandler(settingService, buildInfo, notificationEmailService)
 	totpHandler := handler.NewTotpHandler(totpService)
 	handlerPaymentHandler := handler.NewPaymentHandler(paymentService, paymentConfigService, channelService)
@@ -288,7 +287,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := provideBuiltinFactories(accountRepository, proxyRepository, idempotencyRepository, configConfig)
+	contentModerationRepository := repository.NewContentModerationRepository(db)
+	contentModerationHashCache := repository.NewContentModerationHashCache(redisClient)
+	v := provideBuiltinFactories(accountRepository, proxyRepository, idempotencyRepository, configConfig, settingRepository, contentModerationRepository, contentModerationHashCache, groupRepository, userRepository, apiKeyAuthCacheInvalidator, emailService, contentModerationHandle)
 	manager, err := providePluginManager(hostDeps, pluginStateStore, pluginsConfig, v)
 	if err != nil {
 		return nil, err
@@ -349,20 +350,38 @@ func providePluginsConfig(cfg *config.Config) (pluginkit.PluginsConfig, error) {
 }
 
 // provideBuiltinFactories 汇总全部编译期装配的插件工厂：内建示例 + 迁移自
-// 既有常驻服务的 job.* 插件（jobs 包）。作为管理器与外部层保留 ID 集合的
-// 单一事实源，确保 job ID 也被纳入外部插件 ID 冲突保护。
+// 既有常驻服务的 job.* 插件（jobs 包）+ 功能域插件（内容审计）。作为管理器
+// 与外部层保留 ID 集合的单一事实源，确保迁移型 ID 也被纳入外部插件冲突保护。
 func provideBuiltinFactories(
 	accountRepo service.AccountRepository,
 	proxyRepo service.ProxyRepository,
 	idempotencyRepo service.IdempotencyRepository,
 	cfg *config.Config,
+	settingRepo service.SettingRepository,
+	moderationRepo service.ContentModerationRepository,
+	moderationHashCache service.ContentModerationHashCache,
+	groupRepo service.GroupRepository,
+	userRepo service.UserRepository,
+	authCacheInvalidator service.APIKeyAuthCacheInvalidator,
+	emailService *service.EmailService,
+	moderationHandle *service.ContentModerationHandle,
 ) []pluginkit.Factory {
-	return append(plugins.Builtin(), jobs.Factories(jobs.JobDeps{
+	factories := append(plugins.Builtin(), jobs.Factories(jobs.JobDeps{
 		AccountRepo:     accountRepo,
 		ProxyRepo:       proxyRepo,
 		IdempotencyRepo: idempotencyRepo,
 		Config:          cfg,
 	})...)
+	return append(factories, moderation.New(moderation.Deps{
+		SettingRepo:          settingRepo,
+		Repo:                 moderationRepo,
+		HashCache:            moderationHashCache,
+		GroupRepo:            groupRepo,
+		UserRepo:             userRepo,
+		AuthCacheInvalidator: authCacheInvalidator,
+		EmailService:         emailService,
+		Handle:               moderationHandle,
+	}))
 }
 
 // providePluginManager 用编译期装配清单实例化插件生命周期驱动器。

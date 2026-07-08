@@ -12,11 +12,21 @@ import (
 )
 
 type ContentModerationHandler struct {
-	service *service.ContentModerationService
+	handle *service.ContentModerationHandle
 }
 
-func NewContentModerationHandler(svc *service.ContentModerationService) *ContentModerationHandler {
-	return &ContentModerationHandler{service: svc}
+func NewContentModerationHandler(handle *service.ContentModerationHandle) *ContentModerationHandler {
+	return &ContentModerationHandler{handle: handle}
+}
+
+// resolveService 解析当前绑定的内容审计服务。content-moderation 插件停用时
+// 返回 nil 并写出 404（与插件分发器的熄灭语义一致：停用 = 功能不存在）。
+func (h *ContentModerationHandler) resolveService(c *gin.Context) *service.ContentModerationService {
+	svc := h.handle.Get()
+	if svc == nil {
+		response.NotFound(c, "content moderation plugin disabled")
+	}
+	return svc
 }
 
 type contentModerationConfigRequest struct {
@@ -69,7 +79,11 @@ type contentModerationHashRequest struct {
 }
 
 func (h *ContentModerationHandler) GetConfig(c *gin.Context) {
-	cfg, err := h.service.GetConfig(c.Request.Context())
+	svc := h.resolveService(c)
+	if svc == nil {
+		return
+	}
+	cfg, err := svc.GetConfig(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -78,12 +92,16 @@ func (h *ContentModerationHandler) GetConfig(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
+	svc := h.resolveService(c)
+	if svc == nil {
+		return
+	}
 	var req contentModerationConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	cfg, err := h.service.UpdateConfig(c.Request.Context(), service.UpdateContentModerationConfigInput{
+	cfg, err := svc.UpdateConfig(c.Request.Context(), service.UpdateContentModerationConfigInput{
 		Enabled:                        req.Enabled,
 		Mode:                           req.Mode,
 		BaseURL:                        req.BaseURL,
@@ -124,12 +142,16 @@ func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) TestAPIKeys(c *gin.Context) {
+	svc := h.resolveService(c)
+	if svc == nil {
+		return
+	}
 	var req contentModerationAPIKeyTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	result, err := h.service.TestAPIKeys(c.Request.Context(), service.TestContentModerationAPIKeysInput{
+	result, err := svc.TestAPIKeys(c.Request.Context(), service.TestContentModerationAPIKeysInput{
 		APIKeys:   req.APIKeys,
 		BaseURL:   req.BaseURL,
 		Model:     req.Model,
@@ -145,7 +167,11 @@ func (h *ContentModerationHandler) TestAPIKeys(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) GetStatus(c *gin.Context) {
-	status, err := h.service.GetStatus(c.Request.Context())
+	svc := h.resolveService(c)
+	if svc == nil {
+		return
+	}
+	status, err := svc.GetStatus(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -154,6 +180,10 @@ func (h *ContentModerationHandler) GetStatus(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) ListLogs(c *gin.Context) {
+	svc := h.resolveService(c)
+	if svc == nil {
+		return
+	}
 	page, pageSize := response.ParsePagination(c)
 	filter := service.ContentModerationLogFilter{
 		Pagination: pagination.PaginationParams{
@@ -192,7 +222,7 @@ func (h *ContentModerationHandler) ListLogs(c *gin.Context) {
 		}
 		filter.To = &t
 	}
-	items, pageResult, err := h.service.ListLogs(c.Request.Context(), filter)
+	items, pageResult, err := svc.ListLogs(c.Request.Context(), filter)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -201,12 +231,16 @@ func (h *ContentModerationHandler) ListLogs(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) UnbanUser(c *gin.Context) {
+	svc := h.resolveService(c)
+	if svc == nil {
+		return
+	}
 	userID, err := strconv.ParseInt(strings.TrimSpace(c.Param("user_id")), 10, 64)
 	if err != nil || userID <= 0 {
 		response.BadRequest(c, "Invalid user_id")
 		return
 	}
-	result, err := h.service.UnbanUser(c.Request.Context(), userID)
+	result, err := svc.UnbanUser(c.Request.Context(), userID)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -215,12 +249,16 @@ func (h *ContentModerationHandler) UnbanUser(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) DeleteFlaggedHash(c *gin.Context) {
+	svc := h.resolveService(c)
+	if svc == nil {
+		return
+	}
 	var req contentModerationHashRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	result, err := h.service.DeleteFlaggedInputHash(c.Request.Context(), req.InputHash)
+	result, err := svc.DeleteFlaggedInputHash(c.Request.Context(), req.InputHash)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -229,7 +267,11 @@ func (h *ContentModerationHandler) DeleteFlaggedHash(c *gin.Context) {
 }
 
 func (h *ContentModerationHandler) ClearFlaggedHashes(c *gin.Context) {
-	result, err := h.service.ClearFlaggedInputHashes(c.Request.Context())
+	svc := h.resolveService(c)
+	if svc == nil {
+		return
+	}
+	result, err := svc.ClearFlaggedInputHashes(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
