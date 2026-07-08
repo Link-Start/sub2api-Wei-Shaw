@@ -3,15 +3,8 @@ export default {
     title: '插件管理',
     description: '查看已注册插件的运行状态，免重启启用或停用插件',
     empty: '暂无已注册插件',
-    columns: {
-      id: '插件 ID',
-      tier: '层级',
-      enabled: '启用',
-      state: '状态',
-      error: '错误信息',
-      startedAt: '启动时间',
-      actions: '操作'
-    },
+    noDescription: '暂无描述',
+    startedAt: '启动时间',
     stateLabels: {
       disabled: '未启用',
       running: '运行中',
@@ -22,11 +15,32 @@ export default {
       builtin: '内建',
       external: '外部'
     },
+    // 内建插件的展示元数据（外部插件的名称/描述来自其 manifest）
+    meta: {
+      demo: {
+        name: '示例插件',
+        description: '内建插件体系的演示插件：验证配置注入、生命周期启停与插件 API 分发。'
+      },
+      'content-moderation': {
+        name: '内容审计',
+        description: '内容安全功能域：请求内容审查、风险自动处置与风控中心后台。'
+      }
+    },
+    settings: '设置',
+    settingsTitle: '插件设置：{name}',
     enableSuccess: '插件已启用',
     disableSuccess: '插件已停用',
     toggleFailed: '插件启停操作失败',
     loadFailed: '加载插件列表失败',
-    upload: '上传插件',
+    install: '安装插件',
+    uploadDialogTitle: '安装插件',
+    uploadDropHint: '拖拽插件包到此处，或点击选择文件',
+    uploadRequirements: '仅支持 .zip 插件包（需包含 manifest.json），默认大小上限 64MB',
+    uploadSecurityNote: '请仅安装可信来源的插件包：插件将以独立进程运行，并获得其清单声明的能力。',
+    uploadDefaultDisabled: '安装后插件默认处于停用状态，需在列表中手动启用。',
+    uploadInvalidType: '仅支持 .zip 格式的插件包',
+    uploadConfirm: '上传并安装',
+    removeFile: '移除文件',
     uploading: '上传中 {percent}%',
     uploadSuccess: '插件包已安装',
     uploadFailed: '插件包上传失败',

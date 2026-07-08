@@ -30,16 +30,6 @@ export default {
           enabled: '启用可用渠道',
           enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。',
         },
-        riskControl: {
-          title: '风控中心',
-          description: '启用内容审计菜单和全端点请求审核入口。默认关闭。',
-          configureLink: '前往 风控中心 配置内容审计',
-          enabled: '启用风控中心',
-          enabledHint: '关闭后管理员侧边栏入口隐藏，网关内容审计不会执行。',
-          cyberSessionBlock: 'cyber 会话自动屏蔽',
-          cyberSessionBlockHint: '开启后,被上游网络安全策略(cyber_policy)拦截的会话将在 TTL 内被本地屏蔽,不再发往上游。仅屏蔽该会话,不影响同 Key 其他会话。',
-          cyberSessionBlockTTL: '屏蔽时长(秒)',
-        },
         affiliate: {
           title: '邀请返利',
           description: '老用户邀请新用户注册，新用户充值后老用户按比例获得返利额度。默认关闭。',

@@ -5840,64 +5840,6 @@
           </div>
         </div>
 
-        <div class="card">
-          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-              {{ t('admin.settings.features.riskControl.title') }}
-            </h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {{ t('admin.settings.features.riskControl.description') }}
-            </p>
-            <p class="mt-1.5 text-xs">
-              <router-link
-                to="/admin/risk-control"
-                class="inline-flex items-center gap-1 text-primary-600 hover:underline dark:text-primary-400"
-              >
-                {{ t('admin.settings.features.riskControl.configureLink') }}
-                <span aria-hidden="true">→</span>
-              </router-link>
-            </p>
-          </div>
-          <div class="space-y-5 p-6">
-            <div class="flex items-center justify-between">
-              <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('admin.settings.features.riskControl.enabled') }}
-                </label>
-                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.settings.features.riskControl.enabledHint') }}
-                </p>
-              </div>
-              <Toggle v-model="form.risk_control_enabled" />
-            </div>
-
-            <div class="flex items-center justify-between">
-              <div>
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('admin.settings.features.riskControl.cyberSessionBlock') }}
-                </label>
-                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.settings.features.riskControl.cyberSessionBlockHint') }}
-                </p>
-              </div>
-              <Toggle v-model="form.cyber_session_block_enabled" />
-            </div>
-
-            <div v-if="form.cyber_session_block_enabled">
-              <label class="input-label">
-                {{ t('admin.settings.features.riskControl.cyberSessionBlockTTL') }}
-                <span class="text-red-500">*</span>
-              </label>
-              <input
-                v-model.number="form.cyber_session_block_ttl_seconds"
-                type="number"
-                min="1"
-                class="input"
-              />
-            </div>
-          </div>
-        </div>
-
         <!-- Affiliate (邀请返利) feature card -->
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
@@ -7994,6 +7936,10 @@ type SettingsForm = Omit<
   | "wechat_connect_open_enabled"
   | "wechat_connect_mp_enabled"
   | "wechat_connect_mobile_enabled"
+  // 风控设置已迁入 content-moderation 插件设置面板（插件管理页），本表单不再承载
+  | "risk_control_enabled"
+  | "cyber_session_block_enabled"
+  | "cyber_session_block_ttl_seconds"
 > & {
   smtp_password: string;
   turnstile_secret_key: string;
@@ -8060,9 +8006,6 @@ const form = reactive<SettingsForm>({
   backend_mode_enabled: false,
   hide_ccs_import_button: false,
   payment_enabled: false,
-  risk_control_enabled: false,
-  cyber_session_block_enabled: false,
-  cyber_session_block_ttl_seconds: 3600,
   payment_min_amount: 1,
   payment_max_amount: 10000,
   payment_daily_limit: 50000,
@@ -9559,10 +9502,6 @@ async function saveSettings() {
       ),
       // Payment configuration
       payment_enabled: form.payment_enabled,
-      risk_control_enabled: form.risk_control_enabled,
-      cyber_session_block_enabled: form.cyber_session_block_enabled,
-      cyber_session_block_ttl_seconds:
-        Number(form.cyber_session_block_ttl_seconds) || 3600,
       payment_min_amount: Number(form.payment_min_amount) || 0,
       payment_max_amount: Number(form.payment_max_amount) || 0,
       payment_daily_limit: Number(form.payment_daily_limit) || 0,

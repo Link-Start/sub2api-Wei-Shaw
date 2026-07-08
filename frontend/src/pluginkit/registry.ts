@@ -15,11 +15,12 @@
 
 import { shallowRef } from 'vue'
 import type { RouteRecordRaw } from 'vue-router'
-import type { PluginDescriptor, PluginNavItem } from './types'
+import type { PluginDescriptor, PluginNavItem, PluginSettingsLoader } from './types'
+import { contentModerationPlugin } from '@/plugins/content-moderation'
 import { demoPlugin } from '@/plugins/demo'
 
-/** ⭐ 唯一编译期装配清单：本阶段仅 demo 插件 */
-export const builtinPlugins: PluginDescriptor[] = [demoPlugin]
+/** ⭐ 唯一编译期装配清单 */
+export const builtinPlugins: PluginDescriptor[] = [contentModerationPlugin, demoPlugin]
 
 // activePlugins 是聚合函数实际读取的清单；生产环境恒等于 builtinPlugins，
 // 仅守护测试可经 _setPluginsForTest 注入/清空，用于锁定"零行为变更"。
@@ -97,6 +98,20 @@ export function pluginMessages(locale: 'zh' | 'en'): Record<string, unknown> {
     }
   }
   return { plugins: byId }
+}
+
+/**
+ * 指定插件声明的设置面板懒加载器；未声明（或未注册的 ID）返回 null。
+ * 内建与运行时注册的外部插件走同一查找，插件管理页据此渲染"设置"入口——
+ * 入口的有无完全由描述符声明驱动，宿主不对任何插件 ID 做特判。
+ */
+export function pluginSettingsLoader(id: string): PluginSettingsLoader | null {
+  for (const plugin of [...activePlugins, ...activeRuntimePlugins.value]) {
+    if (plugin.id === id) {
+      return plugin.settings ?? null
+    }
+  }
+  return null
 }
 
 // ==================== 外部插件运行时注册 ====================

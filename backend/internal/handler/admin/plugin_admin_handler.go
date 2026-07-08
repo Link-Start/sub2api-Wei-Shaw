@@ -65,11 +65,14 @@ func NewPluginHandler(
 }
 
 // adminPluginStatus 是 admin 快照里的一项：内建/外部统一形状，
-// tier 区分层级，外部插件另带安装版本。
+// tier 区分层级，外部插件另带安装版本与清单元数据（name/description）。
+// 内建插件的名称/描述由前端按 ID 经 i18n 提供，后端不下发。
 type adminPluginStatus struct {
 	pluginkit.PluginStatus
-	Tier    string `json:"tier"`
-	Version string `json:"version,omitempty"`
+	Tier        string `json:"tier"`
+	Version     string `json:"version,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // List 返回全部插件的状态快照：内建（Manager）与外部（Supervisor）合并，
@@ -86,6 +89,8 @@ func (h *PluginHandler) List(c *gin.Context) {
 				PluginStatus: externalToPluginStatus(st),
 				Tier:         pluginTierExternal,
 				Version:      st.Version,
+				Name:         st.Name,
+				Description:  st.Description,
 			})
 		}
 	}
@@ -142,6 +147,8 @@ func (h *PluginHandler) setEnabled(c *gin.Context, enabled bool) {
 			PluginStatus: externalToPluginStatus(st),
 			Tier:         pluginTierExternal,
 			Version:      st.Version,
+			Name:         st.Name,
+			Description:  st.Description,
 		})
 		return
 	}

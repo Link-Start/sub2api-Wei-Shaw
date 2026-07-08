@@ -3,15 +3,8 @@ export default {
     title: 'Plugin Management',
     description: 'Inspect registered plugin runtime status and enable or disable plugins without restart',
     empty: 'No registered plugins',
-    columns: {
-      id: 'Plugin ID',
-      tier: 'Tier',
-      enabled: 'Enabled',
-      state: 'State',
-      error: 'Error',
-      startedAt: 'Started At',
-      actions: 'Actions'
-    },
+    noDescription: 'No description',
+    startedAt: 'Started at',
     stateLabels: {
       disabled: 'Disabled',
       running: 'Running',
@@ -22,11 +15,35 @@ export default {
       builtin: 'Builtin',
       external: 'External'
     },
+    // Display metadata for builtin plugins (external plugins carry name/description in their manifest)
+    meta: {
+      demo: {
+        name: 'Demo Plugin',
+        description:
+          'Showcase plugin for the builtin plugin system: config injection, lifecycle start/stop and plugin API dispatch.'
+      },
+      'content-moderation': {
+        name: 'Content Moderation',
+        description:
+          'Content safety domain: request content review, automated risk enforcement and the risk-control console.'
+      }
+    },
+    settings: 'Settings',
+    settingsTitle: 'Plugin Settings: {name}',
     enableSuccess: 'Plugin enabled',
     disableSuccess: 'Plugin disabled',
     toggleFailed: 'Failed to toggle plugin',
     loadFailed: 'Failed to load plugins',
-    upload: 'Upload Plugin',
+    install: 'Install Plugin',
+    uploadDialogTitle: 'Install Plugin',
+    uploadDropHint: 'Drag & drop a plugin package here, or click to browse',
+    uploadRequirements: 'Only .zip packages (with manifest.json), default size limit 64MB',
+    uploadSecurityNote:
+      'Only install plugin packages from trusted sources: plugins run as separate processes with the capabilities declared in their manifest.',
+    uploadDefaultDisabled: 'Installed plugins start disabled; enable them from the list.',
+    uploadInvalidType: 'Only .zip plugin packages are supported',
+    uploadConfirm: 'Upload & Install',
+    removeFile: 'Remove file',
     uploading: 'Uploading {percent}%',
     uploadSuccess: 'Plugin package installed',
     uploadFailed: 'Failed to upload plugin package',

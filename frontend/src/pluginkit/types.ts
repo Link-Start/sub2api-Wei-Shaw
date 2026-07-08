@@ -6,7 +6,14 @@
  * 门控（fail-closed：清单未加载或不含该插件 ID 时一律视为禁用）。
  */
 
+import type { Component } from 'vue'
 import type { RouteRecordRaw } from 'vue-router'
+
+/**
+ * 插件设置面板的懒加载器（与路由组件同纪律：未打开设置弹窗不加载插件 chunk）。
+ * 面板组件自包含：自行加载/保存自己的配置，宿主（插件管理页）只提供弹窗容器。
+ */
+export type PluginSettingsLoader = () => Promise<{ default: Component }>
 
 /**
  * 插件贡献的导航项。
@@ -44,6 +51,8 @@ export interface PluginDescriptor {
   userNav?: PluginNavItem[]
   /** 插件文案，聚合挂载到 plugins.<id>.* 命名空间（zh/en 键集必须一致） */
   i18n?: { zh: object; en: object }
+  /** 插件设置面板；声明后插件管理页卡片出现"设置"入口（弹窗内渲染） */
+  settings?: PluginSettingsLoader
 }
 
 /**

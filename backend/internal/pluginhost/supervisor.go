@@ -66,14 +66,17 @@ type ExternalLayer struct {
 }
 
 // ExternalPluginStatus 是单个外部插件的状态快照（admin 快照合并用）。
-// 字段语义与 pluginkit.PluginStatus 对齐，另带安装版本。
+// 字段语义与 pluginkit.PluginStatus 对齐，另带安装版本与清单元数据
+// （Name/Description 来自 manifest，插件列表展示用）。
 type ExternalPluginStatus struct {
-	ID        pluginkit.ID
-	Enabled   bool
-	State     pluginkit.State
-	Err       string
-	StartedAt *time.Time
-	Version   string
+	ID          pluginkit.ID
+	Enabled     bool
+	State       pluginkit.State
+	Err         string
+	StartedAt   *time.Time
+	Version     string
+	Name        string
+	Description string
 }
 
 // EnabledExternalPlugin 是用户态 enabled 清单里的一项外部插件：
@@ -387,10 +390,12 @@ func (s *Supervisor) StatusOf(id pluginkit.ID) (ExternalPluginStatus, bool) {
 	}
 
 	st := ExternalPluginStatus{
-		ID:      id,
-		Enabled: s.states.Enabled(id),
-		State:   pluginkit.StateDisabled,
-		Version: inst.Version,
+		ID:          id,
+		Enabled:     s.states.Enabled(id),
+		State:       pluginkit.StateDisabled,
+		Version:     inst.Version,
+		Name:        inst.Manifest.Name,
+		Description: inst.Manifest.Description,
 	}
 	if e != nil {
 		e.mu.Lock()

@@ -15,6 +15,12 @@ export interface PluginStatus {
   started_at?: string
   /** 外部层快照合并后透出；缺省按 builtin 处理（内建快照不带该字段时兼容） */
   tier?: PluginTier
+  /** 仅外部插件：安装版本 */
+  version?: string
+  /** 仅外部插件：manifest 声明的名称（内建插件名称由前端 i18n 按 ID 提供） */
+  name?: string
+  /** 仅外部插件：manifest 声明的描述 */
+  description?: string
 }
 
 /** 上传安装/升级成功的响应载荷（对齐后端 externalPluginInstalled） */

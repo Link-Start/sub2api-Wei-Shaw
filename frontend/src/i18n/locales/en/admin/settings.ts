@@ -30,16 +30,6 @@ export default {
           enabled: 'Enable Available Channels',
           enabledHint: 'When off, the sidebar entry is hidden and the endpoint returns an empty list.',
         },
-        riskControl: {
-          title: 'Risk Control',
-          description: 'Enable the content moderation menu and gateway audit entry point. Disabled by default.',
-          configureLink: 'Configure content moderation in Risk Control',
-          enabled: 'Enable Risk Control',
-          enabledHint: 'When off, the admin sidebar entry is hidden and gateway moderation is skipped.',
-          cyberSessionBlock: 'Cyber session auto-block',
-          cyberSessionBlockHint: 'When enabled, sessions hit by upstream cyber_policy are blocked locally for the TTL and no longer forwarded. Only the offending session is blocked; other sessions on the same key are unaffected.',
-          cyberSessionBlockTTL: 'Block TTL (seconds)',
-        },
         affiliate: {
           title: 'Affiliate (Invite Rebate)',
           description: 'Existing users invite new ones; the inviter earns a percentage rebate on the invitee’s recharges. Disabled by default.',

@@ -14,7 +14,8 @@ const {
   putPluginConfig,
   refreshEnabled,
   showError,
-  showSuccess
+  showSuccess,
+  settingsLoader
 } = vi.hoisted(() => ({
   listPlugins: vi.fn(),
   enablePlugin: vi.fn(),
@@ -25,7 +26,8 @@ const {
   putPluginConfig: vi.fn(),
   refreshEnabled: vi.fn(),
   showError: vi.fn(),
-  showSuccess: vi.fn()
+  showSuccess: vi.fn(),
+  settingsLoader: vi.fn()
 }))
 
 vi.mock('@/api/admin/plugins', () => {
@@ -45,6 +47,10 @@ vi.mock('@/pluginkit/enabled', () => ({
   useEnabledPluginsStore: () => ({ refresh: refreshEnabled })
 }))
 
+vi.mock('@/pluginkit/registry', () => ({
+  pluginSettingsLoader: settingsLoader
+}))
+
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({ showError, showSuccess })
 }))
@@ -53,29 +59,12 @@ vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
-    useI18n: () => ({ t: (key: string) => key })
+    // te 恒 false：卡片名称/描述走 manifest/ID 回退路径，断言不依赖语言包内容
+    useI18n: () => ({ t: (key: string) => key, te: () => false })
   }
 })
 
 const AppLayoutStub = { template: '<div><slot /></div>' }
-const TablePageLayoutStub = {
-  template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
-}
-// DataTable 桌面路径依赖虚拟滚动（jsdom 无高度），跟随相邻 spec 惯例以 stub 渲染 cell slots
-const DataTableStub = {
-  props: ['columns', 'data', 'loading', 'rowKey'],
-  template: `
-    <div>
-      <div data-test="columns">{{ columns.map(col => col.key).join(',') }}</div>
-      <div v-for="row in data" :key="row.id">
-        <template v-for="col in columns" :key="col.key">
-          <slot :name="'cell-' + col.key" :value="row[col.key]" :row="row" />
-        </template>
-      </div>
-      <slot v-if="!loading && data.length === 0" name="empty" />
-    </div>
-  `
-}
 const ConfirmDialogStub = {
   props: ['show', 'title', 'message', 'confirmText', 'cancelText', 'danger'],
   emits: ['confirm', 'cancel'],
@@ -87,10 +76,11 @@ const ConfirmDialogStub = {
     </div>
   `
 }
+// 两个 BaseDialog（上传/配置）共用 stub：断言依赖各自内部唯一的 data-test 元素
 const BaseDialogStub = {
   props: ['show', 'title'],
   emits: ['close'],
-  template: '<div v-if="show" data-test="config-dialog"><slot /><slot name="footer" /></div>'
+  template: '<div v-if="show"><slot /><slot name="footer" /></div>'
 }
 
 const demoStatus = (overrides: Partial<PluginStatus> = {}): PluginStatus => ({
@@ -113,8 +103,6 @@ function mountView() {
     global: {
       stubs: {
         AppLayout: AppLayoutStub,
-        TablePageLayout: TablePageLayoutStub,
-        DataTable: DataTableStub,
         ConfirmDialog: ConfirmDialogStub,
         BaseDialog: BaseDialogStub,
         EmptyState: true,
@@ -124,11 +112,17 @@ function mountView() {
   })
 }
 
-function selectFile(wrapper: ReturnType<typeof mountView>, file: File) {
+async function openUploadDialog(wrapper: ReturnType<typeof mountView>) {
+  await wrapper.get('[data-test="plugin-upload-btn"]').trigger('click')
+}
+
+function pickFile(wrapper: ReturnType<typeof mountView>, file: File) {
   const input = wrapper.get('[data-test="plugin-upload-input"]')
   Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
   return input.trigger('change')
 }
+
+const zipFile = () => new File(['zip-bytes'], 'plugin.zip', { type: 'application/zip' })
 
 beforeEach(() => {
   listPlugins.mockReset()
@@ -141,6 +135,8 @@ beforeEach(() => {
   refreshEnabled.mockReset()
   showError.mockReset()
   showSuccess.mockReset()
+  settingsLoader.mockReset()
+  settingsLoader.mockReturnValue(null)
 
   listPlugins.mockResolvedValue([demoStatus()])
   enablePlugin.mockResolvedValue(demoStatus({ enabled: true, state: 'running' }))
@@ -159,7 +155,7 @@ beforeEach(() => {
 })
 
 describe('admin PluginsView', () => {
-  it('挂载时加载插件快照并展示 id/状态', async () => {
+  it('挂载时加载插件快照并以卡片展示 id/状态', async () => {
     listPlugins.mockResolvedValue([
       demoStatus({
         enabled: true,
@@ -172,8 +168,28 @@ describe('admin PluginsView', () => {
     await flushPromises()
 
     expect(listPlugins).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-test="plugin-card-demo"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('demo')
     expect(wrapper.text()).toContain('admin.plugins.stateLabels.running')
+    wrapper.unmount()
+  })
+
+  it('外部插件卡片展示 manifest 名称/描述与版本', async () => {
+    listPlugins.mockResolvedValue([
+      externalStatus({
+        name: 'Hello Plugin',
+        description: 'Say hello from an external process',
+        version: '1.2.3'
+      })
+    ])
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const card = wrapper.get('[data-test="plugin-card-ext-hello"]')
+    expect(card.text()).toContain('Hello Plugin')
+    expect(card.text()).toContain('Say hello from an external process')
+    expect(card.text()).toContain('v1.2.3')
     wrapper.unmount()
   })
 
@@ -268,33 +284,139 @@ describe('admin PluginsView', () => {
     })
   })
 
-  describe('上传安装', () => {
-    it('选择 zip → uploadPlugin(file) → 成功提示并刷新列表', async () => {
+  describe('插件设置面板（描述符声明驱动）', () => {
+    it('声明了设置面板的插件卡片显示设置按钮，点击后弹窗渲染懒加载面板', async () => {
+      const PanelStub = { template: '<div data-test="settings-panel-stub">panel</div>' }
+      // 直接 resolve 组件（defineAsyncComponent 仅对真实 ES module 解包 default）
+      settingsLoader.mockImplementation((id: string) =>
+        id === 'demo' ? () => Promise.resolve(PanelStub) : null
+      )
+
       const wrapper = mountView()
       await flushPromises()
 
-      const file = new File(['zip-bytes'], 'plugin.zip', { type: 'application/zip' })
-      await selectFile(wrapper, file)
+      await wrapper.get('[data-test="plugin-settings-demo"]').trigger('click')
+      // 异步组件：loader 的 promise 解析 + Vue 重渲染各占一轮微任务
+      await flushPromises()
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="settings-panel-stub"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('未声明设置面板的插件卡片不显示设置按钮', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="plugin-settings-demo"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+  })
+
+  describe('上传安装（弹窗：拖拽/点选 → 确认）', () => {
+    it('点击安装 → 弹窗展示拖拽区与提示，未选文件时确认按钮禁用', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="plugin-upload-dropzone"]').exists()).toBe(false)
+      await openUploadDialog(wrapper)
+
+      expect(wrapper.find('[data-test="plugin-upload-dropzone"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('admin.plugins.uploadSecurityNote')
+      const confirm = wrapper.get('[data-test="plugin-upload-confirm"]')
+      expect((confirm.element as HTMLButtonElement).disabled).toBe(true)
+      expect(uploadPlugin).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('选择 zip → 确认 → uploadPlugin(file) → 成功提示、关闭弹窗并刷新列表', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+
+      await openUploadDialog(wrapper)
+      const file = zipFile()
+      await pickFile(wrapper, file)
+
+      expect(wrapper.get('[data-test="plugin-upload-file"]').text()).toContain('plugin.zip')
+      const confirm = wrapper.get('[data-test="plugin-upload-confirm"]')
+      expect((confirm.element as HTMLButtonElement).disabled).toBe(false)
+
+      await confirm.trigger('click')
       await flushPromises()
 
       expect(uploadPlugin).toHaveBeenCalledTimes(1)
       expect(uploadPlugin.mock.calls[0][0]).toBe(file)
       expect(showSuccess).toHaveBeenCalledWith('admin.plugins.uploadSuccess')
       expect(listPlugins).toHaveBeenCalledTimes(2)
+      // 成功后弹窗关闭
+      expect(wrapper.find('[data-test="plugin-upload-dropzone"]').exists()).toBe(false)
       wrapper.unmount()
     })
 
-    it('上传失败 → 展示后端 message', async () => {
+    it('拖拽 zip 到拖拽区 → 文件被选中', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+
+      await openUploadDialog(wrapper)
+      const file = zipFile()
+      await wrapper
+        .get('[data-test="plugin-upload-dropzone"]')
+        .trigger('drop', { dataTransfer: { files: [file] } })
+
+      expect(wrapper.get('[data-test="plugin-upload-file"]').text()).toContain('plugin.zip')
+      expect(
+        (wrapper.get('[data-test="plugin-upload-confirm"]').element as HTMLButtonElement).disabled
+      ).toBe(false)
+      expect(uploadPlugin).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('非 .zip 文件 → 就地报错且不收下文件', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+
+      await openUploadDialog(wrapper)
+      await pickFile(wrapper, new File(['x'], 'evil.exe', { type: 'application/octet-stream' }))
+
+      expect(showError).toHaveBeenCalledWith('admin.plugins.uploadInvalidType')
+      expect(wrapper.find('[data-test="plugin-upload-file"]').exists()).toBe(false)
+      expect(
+        (wrapper.get('[data-test="plugin-upload-confirm"]').element as HTMLButtonElement).disabled
+      ).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('移除已选文件 → 确认按钮回到禁用', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+
+      await openUploadDialog(wrapper)
+      await pickFile(wrapper, zipFile())
+      await wrapper.get('[data-test="plugin-upload-remove"]').trigger('click')
+
+      expect(wrapper.find('[data-test="plugin-upload-file"]').exists()).toBe(false)
+      expect(
+        (wrapper.get('[data-test="plugin-upload-confirm"]').element as HTMLButtonElement).disabled
+      ).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('上传失败 → 展示后端 message，弹窗保持打开可重试', async () => {
       uploadPlugin.mockRejectedValue({ status: 400, message: 'invalid plugin package: bad manifest' })
 
       const wrapper = mountView()
       await flushPromises()
 
-      await selectFile(wrapper, new File(['x'], 'bad.zip', { type: 'application/zip' }))
+      await openUploadDialog(wrapper)
+      await pickFile(wrapper, zipFile())
+      await wrapper.get('[data-test="plugin-upload-confirm"]').trigger('click')
       await flushPromises()
 
       expect(showError).toHaveBeenCalledWith('invalid plugin package: bad manifest')
       expect(listPlugins).toHaveBeenCalledTimes(1)
+      // 弹窗与已选文件保留，可修正后直接重试
+      expect(wrapper.find('[data-test="plugin-upload-dropzone"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="plugin-upload-file"]').exists()).toBe(true)
       wrapper.unmount()
     })
 
@@ -304,23 +426,12 @@ describe('admin PluginsView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      await selectFile(wrapper, new File(['x'], 'bad.zip', { type: 'application/zip' }))
+      await openUploadDialog(wrapper)
+      await pickFile(wrapper, zipFile())
+      await wrapper.get('[data-test="plugin-upload-confirm"]').trigger('click')
       await flushPromises()
 
       expect(showError).toHaveBeenCalledWith('admin.plugins.uploadFailed')
-      wrapper.unmount()
-    })
-
-    it('未选择文件（change 无 files）不触发上传', async () => {
-      const wrapper = mountView()
-      await flushPromises()
-
-      const input = wrapper.get('[data-test="plugin-upload-input"]')
-      Object.defineProperty(input.element, 'files', { value: [], configurable: true })
-      await input.trigger('change')
-      await flushPromises()
-
-      expect(uploadPlugin).not.toHaveBeenCalled()
       wrapper.unmount()
     })
   })
@@ -402,7 +513,6 @@ describe('admin PluginsView', () => {
       await flushPromises()
 
       expect(getPluginConfig).toHaveBeenCalledWith('ext-hello')
-      expect(wrapper.find('[data-test="config-dialog"]').exists()).toBe(true)
       const textarea = wrapper.get('[data-test="plugin-config-textarea"]')
       expect((textarea.element as HTMLTextAreaElement).value).toContain('"greeting": "hi"')
       wrapper.unmount()
@@ -450,7 +560,7 @@ describe('admin PluginsView', () => {
 
       expect(putPluginConfig).toHaveBeenCalledWith('ext-hello', '{"greeting":"yo"}')
       expect(showSuccess).toHaveBeenCalledWith('admin.plugins.configSaveSuccess')
-      expect(wrapper.find('[data-test="config-dialog"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="plugin-config-textarea"]').exists()).toBe(false)
       wrapper.unmount()
     })
 
@@ -469,7 +579,7 @@ describe('admin PluginsView', () => {
       expect(wrapper.get('[data-test="plugin-config-error"]').text()).toBe(
         'config: greeting is required'
       )
-      expect(wrapper.find('[data-test="config-dialog"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="plugin-config-textarea"]').exists()).toBe(true)
       wrapper.unmount()
     })
   })

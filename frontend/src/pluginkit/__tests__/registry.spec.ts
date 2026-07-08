@@ -11,10 +11,12 @@ import {
   pluginMessages,
   pluginNav,
   pluginRoutes,
+  pluginSettingsLoader,
   _resetPluginsForTest,
   _setPluginsForTest
 } from '../registry'
-import type { PluginDescriptor } from '../types'
+import type { PluginDescriptor, PluginSettingsLoader } from '../types'
+import { contentModerationPlugin } from '@/plugins/content-moderation'
 import { demoPlugin } from '@/plugins/demo'
 
 // flattenKeys 展平嵌套文案对象为 "a.b.c" 键列表，用于 zh/en 键集一致性断言
@@ -148,6 +150,48 @@ describe('pluginkit registry', () => {
       expect(child.meta?.pluginId).toBe('real-id')
       expect(child.meta?.requiresAuth).toBe(true)
       expect(child.children![0].meta?.pluginId).toBe('real-id')
+    })
+  })
+
+  describe('插件设置面板查找（pluginSettingsLoader）', () => {
+    it('声明了 settings 的插件返回其懒加载器', () => {
+      const loader: PluginSettingsLoader = () =>
+        Promise.resolve({ default: {} as never })
+      _setPluginsForTest([{ id: 'with-settings', settings: loader }])
+      expect(pluginSettingsLoader('with-settings')).toBe(loader)
+    })
+
+    it('未声明 settings 的插件与未注册的 ID 均返回 null', () => {
+      _setPluginsForTest([{ id: 'plain' }])
+      expect(pluginSettingsLoader('plain')).toBeNull()
+      expect(pluginSettingsLoader('unknown')).toBeNull()
+    })
+
+    it('清空清单后一律返回 null（零行为变更）', () => {
+      _setPluginsForTest([])
+      expect(pluginSettingsLoader('content-moderation')).toBeNull()
+    })
+  })
+
+  describe('content-moderation descriptor 结构完整性', () => {
+    it('在编译期装配清单中，ID 与后端一致', () => {
+      expect(builtinPlugins).toContain(contentModerationPlugin)
+      expect(contentModerationPlugin.id).toBe('content-moderation')
+    })
+
+    it('原位收编：不贡献路由/导航，仅贡献设置面板（懒加载函数）', () => {
+      expect(contentModerationPlugin.routes).toBeUndefined()
+      expect(contentModerationPlugin.adminNav).toBeUndefined()
+      expect(contentModerationPlugin.userNav).toBeUndefined()
+      expect(typeof contentModerationPlugin.settings).toBe('function')
+      expect(pluginSettingsLoader('content-moderation')).toBe(contentModerationPlugin.settings)
+    })
+
+    it('i18n zh/en 键集完全一致', () => {
+      expect(contentModerationPlugin.i18n).toBeDefined()
+      const zhKeys = flattenKeys(contentModerationPlugin.i18n!.zh)
+      const enKeys = flattenKeys(contentModerationPlugin.i18n!.en)
+      expect(zhKeys).toEqual(enKeys)
     })
   })
 
