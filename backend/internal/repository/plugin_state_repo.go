@@ -42,11 +42,18 @@ type PluginStateStore struct {
 	rdb        *redis.Client
 	instanceID string
 
-	// writeMu 串行化「DB 写 → 内存快照写 → 广播」复合操作（SetEnabled）以及
-	// reconcile 的「全量读 → 快照替换」，保证内存写序、广播序与 DB 提交序一致。
+	// writeMu 串行化「DB 写 → 内存快照写」复合操作（SetEnabled）以及
+	// reconcile 的「全量读 → 快照替换」，保证内存写序与 DB 提交序一致。
 	// 否则并发 toggle 下本实例内存可与 DB 漂移，最迟要等一个对账周期才收敛。
 	// 订阅者回调始终在 writeMu 之外交付（非持锁上下文契约不受影响）。
 	writeMu sync.Mutex
+
+	// publishMu 让广播序跟随 DB 提交序：SetEnabled 在持 writeMu 时先取
+	// publishMu 再释放 writeMu（锁交接），Publish 的网络调用因此发生在
+	// writeMu 之外——Redis 抖动时慢广播只串行化广播本身，不再阻塞后续
+	// toggle 的 DB 写与 reconcile 对账。乱序广播不可接受：远端实例会以
+	// 过期状态运行至多一个对账周期。
+	publishMu sync.Mutex
 
 	mu      sync.RWMutex
 	enabled map[pluginkit.ID]bool
@@ -139,12 +146,16 @@ func (s *PluginStateStore) SetEnabled(ctx context.Context, id pluginkit.ID, enab
 	s.enabled[id] = enabled
 	s.mu.Unlock()
 
+	// 锁交接：先取 publishMu 再放 writeMu，广播序保持 DB 提交序，
+	// 而 Publish 网络调用不占用 writeMu（见字段注释）。
+	s.publishMu.Lock()
+	s.writeMu.Unlock()
 	if payload, err := json.Marshal(pluginStateMessage{Origin: s.instanceID, ID: string(id), Enabled: enabled}); err != nil {
 		slog.Warn("plugin_state_broadcast_marshal_failed", "plugin_id", string(id), "error", err)
 	} else if err := s.rdb.Publish(ctx, pluginStateChannel, payload).Err(); err != nil {
 		slog.Warn("plugin_state_broadcast_failed", "plugin_id", string(id), "error", err)
 	}
-	s.writeMu.Unlock()
+	s.publishMu.Unlock()
 
 	s.notify(pluginkit.StateChange{ID: id, Enabled: enabled})
 	return nil

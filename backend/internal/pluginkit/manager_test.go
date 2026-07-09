@@ -80,6 +80,9 @@ type testPlugin struct {
 	mountCalls int
 	initErr    error
 	startErr   error
+	initPanic  bool
+	startPanic bool
+	stopPanic  bool
 	stopBlock  chan struct{} // 非 nil 时 Stop 阻塞至 channel 关闭（无视 ctx，模拟卡死插件）
 	onStop     func()
 	host       *Host
@@ -92,6 +95,9 @@ func (p *testPlugin) Init(_ context.Context, host *Host) error {
 	defer p.mu.Unlock()
 	p.initCalls++
 	p.host = host
+	if p.initPanic {
+		panic("init kaboom")
+	}
 	return p.initErr
 }
 
@@ -99,6 +105,9 @@ func (p *testPlugin) Start(_ context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.startCalls++
+	if p.startPanic {
+		panic("start kaboom")
+	}
 	return p.startErr
 }
 
@@ -107,12 +116,16 @@ func (p *testPlugin) Stop(_ context.Context) error {
 	p.stopCalls++
 	block := p.stopBlock
 	onStop := p.onStop
+	stopPanic := p.stopPanic
 	p.mu.Unlock()
 	if onStop != nil {
 		onStop()
 	}
 	if block != nil {
 		<-block
+	}
+	if stopPanic {
+		panic("stop kaboom")
 	}
 	return nil
 }
@@ -123,6 +136,9 @@ func (p *testPlugin) MountRoutes(r Router) {
 	p.mu.Unlock()
 	r.Admin().GET("/hello", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"plugin": string(p.id), "path": c.Request.URL.Path})
+	})
+	r.Admin().GET("/boom", func(_ *gin.Context) {
+		panic("handler kaboom")
 	})
 	r.User().GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"pong": true})
@@ -184,6 +200,37 @@ func TestBootstrap_DefaultEnabledRespectsExplicitDisable(t *testing.T) {
 	// 已有显式记录 → 不被 default 翻开 → 不启动。
 	enabled, _ := store.Lookup("job.seed")
 	require.False(t, enabled, "显式停用不应被 default-enabled 覆盖")
+	require.False(t, p.started.Load())
+}
+
+// seedFailingStateStore 在 SetEnabled 时注入失败，模拟播种期 DB 瞬时故障。
+type seedFailingStateStore struct {
+	*fakeStateStore
+	setErr error
+}
+
+func (s *seedFailingStateStore) SetEnabled(ctx context.Context, id ID, enabled bool, by string) error {
+	if s.setErr != nil {
+		return s.setErr
+	}
+	return s.fakeStateStore.SetEnabled(ctx, id, enabled, by)
+}
+
+// TestBootstrap_DefaultSeedFailureFailsFast 默认启用插件的播种写库失败必须
+// 让 Bootstrap 返回错误（main 侧 fail-fast），不得静默降级为 disabled：
+// 否则默认启用的审计类插件会在服务照常对外的同时 fail-open。
+func TestBootstrap_DefaultSeedFailureFailsFast(t *testing.T) {
+	store := &seedFailingStateStore{
+		fakeStateStore: newFakeStateStore(),
+		setErr:         errors.New("db transient failure"),
+	}
+	p := &defaultEnabledPlugin{id: "job.seed", dflt: true}
+	m := newTestManager(t, store, nil, func() Plugin { return p })
+
+	err := m.Bootstrap(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "seed default-enabled plugin")
+	require.Contains(t, err.Error(), "db transient failure")
 	require.False(t, p.started.Load())
 }
 
@@ -373,6 +420,32 @@ func TestToggle_Concurrent(t *testing.T) {
 	}
 }
 
+// TestStart_FailureCompensatesWithStop Start 失败必须触发一次补偿 Stop：
+// 回收 Init/半启动已获取的资源，否则 re-enable 再跑 Init 会双重获取。
+// failed 现场保留原始 Start 错误，恢复失败原因后 re-enable 照常收敛。
+func TestStart_FailureCompensatesWithStop(t *testing.T) {
+	store := newFakeStateStore()
+	p := &testPlugin{id: "demo", startErr: errors.New("bind: address in use")}
+	m := newTestManager(t, store, nil, func() Plugin { return p })
+	require.NoError(t, m.Bootstrap(context.Background()))
+	ctx := context.Background()
+
+	require.NoError(t, store.SetEnabled(ctx, "demo", true, "t"))
+	st := pluginState(m, "demo")
+	require.Equal(t, StateFailed, st.State)
+	require.Contains(t, st.Err, "address in use")
+	initCalls, startCalls, stopCalls, _ := p.counters()
+	require.Equal(t, [3]int{1, 1, 1}, [3]int{initCalls, startCalls, stopCalls},
+		"Start 失败后应有且仅有一次补偿 Stop")
+
+	// 失败原因消除后 re-enable：同一实例重新 Init→Start 恢复 running。
+	p.mu.Lock()
+	p.startErr = nil
+	p.mu.Unlock()
+	require.NoError(t, store.SetEnabled(ctx, "demo", true, "t"))
+	require.Equal(t, StateRunning, pluginState(m, "demo").State)
+}
+
 func TestStop_TimeoutEntersFailed(t *testing.T) {
 	store := newFakeStateStore()
 	block := make(chan struct{})
@@ -391,12 +464,93 @@ func TestStop_TimeoutEntersFailed(t *testing.T) {
 	require.False(t, m.GateAllows("demo"))
 	close(block) // 释放被泄漏的 Stop goroutine
 
-	// failed 态可经 enable 重试恢复。
+	// failed 态可经 enable 重试恢复。逃逸的 Stop goroutine 退出前 enable 会被
+	// 拒绝（防同实例并发），故用重试收敛断言（对应真实管理员"稍后重试"）。
 	p.mu.Lock()
 	p.stopBlock = nil
 	p.mu.Unlock()
+	require.Eventually(t, func() bool {
+		_ = store.SetEnabled(ctx, "demo", true, "t")
+		return pluginState(m, "demo").State == StateRunning
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestStop_ReenableRejectedWhileStopInFlight(t *testing.T) {
+	store := newFakeStateStore()
+	block := make(chan struct{})
+	p := &testPlugin{id: "demo", stopBlock: block}
+	m := newTestManager(t, store, nil, func() Plugin { return p })
+	m.stopTimeout = 30 * time.Millisecond
+	require.NoError(t, m.Bootstrap(context.Background()))
+	ctx := context.Background()
+
 	require.NoError(t, store.SetEnabled(ctx, "demo", true, "t"))
-	require.Equal(t, StateRunning, pluginState(m, "demo").State)
+	require.NoError(t, store.SetEnabled(ctx, "demo", false, "t"))
+	require.Equal(t, StateFailed, pluginState(m, "demo").State)
+
+	// 旧 Stop 仍阻塞在 block 上：re-enable 必须被拒绝，不得与其并发跑 Init/Start。
+	require.NoError(t, store.SetEnabled(ctx, "demo", true, "t"))
+	st := pluginState(m, "demo")
+	require.Equal(t, StateFailed, st.State)
+	require.Contains(t, st.Err, "previous stop still in progress")
+	initCalls, startCalls, _, _ := p.counters()
+	require.Equal(t, 1, initCalls, "在途 Stop 未退出前不得再次 Init")
+	require.Equal(t, 1, startCalls)
+
+	// 旧 Stop 退出后，重试 enable 恢复 running。
+	close(block)
+	require.Eventually(t, func() bool {
+		_ = store.SetEnabled(ctx, "demo", true, "t")
+		return pluginState(m, "demo").State == StateRunning
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+// TestLifecyclePanicIsolation 插件 Init/Start/Stop panic 一律被 recover 为
+// failed 态：生命周期跑在无兜底的 goroutine（Redis 订阅回调/对账循环）上，
+// 未受控的 panic 会直接崩溃宿主进程（多实例下经广播连锁放大）。
+func TestLifecyclePanicIsolation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("init panic", func(t *testing.T) {
+		store := newFakeStateStore()
+		p := &testPlugin{id: "demo", initPanic: true}
+		m := newTestManager(t, store, nil, func() Plugin { return p })
+		require.NoError(t, m.Bootstrap(ctx))
+		require.NoError(t, store.SetEnabled(ctx, "demo", true, "t"))
+
+		st := pluginState(m, "demo")
+		require.Equal(t, StateFailed, st.State)
+		require.Contains(t, st.Err, "init panicked")
+		require.False(t, m.GateAllows("demo"))
+	})
+
+	t.Run("start panic", func(t *testing.T) {
+		store := newFakeStateStore()
+		p := &testPlugin{id: "demo", startPanic: true}
+		m := newTestManager(t, store, nil, func() Plugin { return p })
+		require.NoError(t, m.Bootstrap(ctx))
+		require.NoError(t, store.SetEnabled(ctx, "demo", true, "t"))
+
+		st := pluginState(m, "demo")
+		require.Equal(t, StateFailed, st.State)
+		require.Contains(t, st.Err, "start panicked")
+	})
+
+	t.Run("stop panic", func(t *testing.T) {
+		store := newFakeStateStore()
+		p := &testPlugin{id: "demo", stopPanic: true}
+		m := newTestManager(t, store, nil, func() Plugin { return p })
+		require.NoError(t, m.Bootstrap(ctx))
+		require.NoError(t, store.SetEnabled(ctx, "demo", true, "t"))
+		require.Equal(t, StateRunning, pluginState(m, "demo").State)
+
+		// Stop 跑在 stopRunner 自建 goroutine 里，panic 若不 recover 任何
+		// caller 都无法捕获（直接崩进程）；这里断言其被折算为 stop 失败。
+		require.NoError(t, store.SetEnabled(ctx, "demo", false, "t"))
+		st := pluginState(m, "demo")
+		require.Equal(t, StateFailed, st.State)
+		require.Contains(t, st.Err, "stop panicked")
+	})
 }
 
 func TestStopAll_ReverseOrderAndAggregatesErrors(t *testing.T) {
@@ -527,6 +681,30 @@ func TestDispatch_GateAndPathRewrite(t *testing.T) {
 	// disable 后门控关闭。
 	require.NoError(t, store.SetEnabled(ctx, "demo", false, "t"))
 	requireEnvelope404(t, doRequest(host, http.MethodGet, "/api/v1/admin/plugins/demo/api/hello"))
+}
+
+// TestDispatch_HandlerPanicRecovered 插件 handler 的 panic 在子路由器边界内
+// 兜住：返回标准 500 错误体，且同一插件后续请求不受影响。
+func TestDispatch_HandlerPanicRecovered(t *testing.T) {
+	store := newFakeStateStore()
+	p := &testPlugin{id: "demo"}
+	m := newTestManager(t, store, nil, func() Plugin { return p })
+	require.NoError(t, m.Bootstrap(context.Background()))
+	require.NoError(t, store.SetEnabled(context.Background(), "demo", true, "t"))
+	host := newDispatchHost(m)
+
+	w := doRequest(host, http.MethodGet, "/api/v1/admin/plugins/demo/api/boom")
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	var body struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, http.StatusInternalServerError, body.Code)
+	require.NotEmpty(t, body.Message)
+
+	// panic 后子路由器仍然存活，正常路由照常命中。
+	require.Equal(t, http.StatusOK, doRequest(host, http.MethodGet, "/api/v1/admin/plugins/demo/api/hello").Code)
 }
 
 func TestDispatch_RestoresHostPath(t *testing.T) {

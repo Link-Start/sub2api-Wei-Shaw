@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -45,6 +47,12 @@ type pluginEntry struct {
 
 	// lifeMu 串行化该插件的生命周期操作（toggle 与 StopAll 互斥）。
 	lifeMu sync.Mutex
+
+	// stopFinished 非 nil 表示一次超时逃逸的 Stop 仍在后台执行（其 goroutine
+	// 退出时关闭该通道）。在其退出前拒绝再次 Init/Start：契约要求 Stop 返回后
+	// 实例方可复用，否则新生命周期会与仍在拆解的旧 Stop 并发。
+	// 读写均在持有 lifeMu 时进行。
+	stopFinished chan struct{}
 
 	// 以下状态字段由 Manager.statusMu 保护（写者同时持有 lifeMu）。
 	state     State
@@ -136,6 +144,13 @@ func (m *Manager) Bootstrap(ctx context.Context) error {
 			continue
 		}
 		engine := gin.New()
+		// 插件 handler 的 panic 在子路由器边界内兜住（宿主 Recovery 之前），
+		// 日志带插件归属，响应与核心 500 语义一致。
+		engine.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, rec any) {
+			m.logger.Error("plugin_handler_panic", "plugin", string(id),
+				"path", c.Request.URL.Path, "panic", fmt.Sprint(rec), "stack", string(debug.Stack()))
+			response.InternalError(c, "plugin handler error")
+		}))
 		engine.NoRoute(func(c *gin.Context) {
 			response.NotFound(c, "plugin route not found")
 		})
@@ -159,7 +174,9 @@ func (m *Manager) Bootstrap(ctx context.Context) error {
 			continue
 		}
 		if err := m.states.SetEnabled(ctx, id, true, "pluginkit:default-enabled"); err != nil {
-			m.logger.Warn("plugin_default_seed_failed", "plugin", string(id), "error", err.Error())
+			// 播种失败必须 fail-fast：默认启用的插件（如内容审计）若因瞬时 DB
+			// 故障静默落空，会在服务照常对外的同时 fail-open 放行其挂钩点。
+			return fmt.Errorf("pluginkit: seed default-enabled plugin %s: %w", id, err)
 		}
 	}
 
@@ -199,23 +216,56 @@ func (m *Manager) onToggle(ch StateChange) {
 	}
 }
 
+// guardPlugin 在插件生命周期调用边界统一 recover：panic 转为 error 并携带
+// 归属与堆栈记日志。生命周期调用可能跑在无兜底的 goroutine 上（Redis 订阅
+// 回调、对账循环、wire cleanup），不设防的插件 panic 会直接崩溃宿主进程。
+func (m *Manager) guardPlugin(e *pluginEntry, op string, fn func() error) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			m.logger.Error("plugin_panic", "plugin", string(e.id), "op", op,
+				"panic", fmt.Sprint(rec), "stack", string(debug.Stack()))
+			err = fmt.Errorf("%s panicked: %v", op, rec)
+		}
+	}()
+	return fn()
+}
+
 // startLocked 对同一实例执行 Init→Start（caller 持有 e.lifeMu）。
 // 已 running 时幂等 no-op；失败进 failed 态并记日志。
 func (m *Manager) startLocked(ctx context.Context, e *pluginEntry) {
 	if m.currentState(e) == StateRunning {
 		return
 	}
+	// 上一轮超时逃逸的 Stop 仍在执行时拒绝启动：等它退出前，同一实例上跑
+	// Init/Start 会与拆解中的旧 Stop 并发，违反实例复用契约。管理员稍后
+	// 重试 enable 即可（届时通道已关闭则照常启动）。
+	if e.stopFinished != nil {
+		select {
+		case <-e.stopFinished:
+			e.stopFinished = nil
+		default:
+			m.setStatus(e, StateFailed, "previous stop still in progress; retry enable later", nil)
+			m.logger.Error("plugin_start_rejected_stop_in_flight", "plugin", string(e.id))
+			return
+		}
+	}
 	if init, ok := e.plugin.(Initializer); ok {
-		if err := init.Init(ctx, e.host); err != nil {
+		if err := m.guardPlugin(e, "init", func() error { return init.Init(ctx, e.host) }); err != nil {
 			m.setStatus(e, StateFailed, err.Error(), nil)
 			m.logger.Error("plugin_init_failed", "plugin", string(e.id), "error", err)
 			return
 		}
 	}
 	if r, ok := e.plugin.(Runner); ok {
-		if err := r.Start(ctx); err != nil {
+		if err := m.guardPlugin(e, "start", func() error { return r.Start(ctx) }); err != nil {
 			m.setStatus(e, StateFailed, err.Error(), nil)
 			m.logger.Error("plugin_start_failed", "plugin", string(e.id), "error", err)
+			// 补偿 Stop（best-effort）：Start 失败可能遗留 Init/半启动已获取的
+			// 资源，不回收则 re-enable 时双重获取。复用 stopRunner 的超时与
+			// 在途登记；其结果仅记日志，failed 现场保留原始 Start 错误。
+			if serr := m.stopRunner(ctx, e, r); serr != nil {
+				m.logger.Error("plugin_start_compensate_stop_failed", "plugin", string(e.id), "error", serr)
+			}
 			return
 		}
 	}
@@ -231,7 +281,7 @@ func (m *Manager) stopLocked(ctx context.Context, e *pluginEntry) error {
 		return nil
 	}
 	if r, ok := e.plugin.(Runner); ok {
-		if err := m.stopRunner(ctx, r); err != nil {
+		if err := m.stopRunner(ctx, e, r); err != nil {
 			m.setStatus(e, StateFailed, err.Error(), nil)
 			m.logger.Error("plugin_stop_failed", "plugin", string(e.id), "error", err)
 			return fmt.Errorf("pluginkit: stop plugin %s: %w", e.id, err)
@@ -242,17 +292,23 @@ func (m *Manager) stopLocked(ctx context.Context, e *pluginEntry) error {
 	return nil
 }
 
-// stopRunner 在独立 goroutine 中调用 Stop 并施加超时：
-// 即使插件不遵守 ctx 卡死，也只泄漏该 goroutine 而不阻塞宿主。
-func (m *Manager) stopRunner(ctx context.Context, r Runner) error {
+// stopRunner 在独立 goroutine 中调用 Stop 并施加超时（caller 持有 e.lifeMu）：
+// 即使插件不遵守 ctx 卡死，也只泄漏该 goroutine 而不阻塞宿主。超时逃逸时把
+// 在途通道记到 e.stopFinished，startLocked 据此拒绝与旧 Stop 并发的重启。
+func (m *Manager) stopRunner(ctx context.Context, e *pluginEntry, r Runner) error {
 	sctx, cancel := context.WithTimeout(ctx, m.stopTimeout)
 	defer cancel()
+	finished := make(chan struct{})
 	done := make(chan error, 1)
-	go func() { done <- r.Stop(sctx) }()
+	go func() {
+		defer close(finished)
+		done <- m.guardPlugin(e, "stop", func() error { return r.Stop(sctx) })
+	}()
 	select {
 	case err := <-done:
 		return err
 	case <-sctx.Done():
+		e.stopFinished = finished
 		return fmt.Errorf("stop timed out after %s: %w", m.stopTimeout, sctx.Err())
 	}
 }

@@ -147,6 +147,11 @@ const runtimeEntries = new Map<string, RuntimeEntry>()
 // 这是运行时注册的安全闸——任意脚本经 window 全局注册任意 ID 一律被拒。
 const expectedRuntimeIds = new Set<string>()
 
+// loader 注入的 <script> 元素 → 其承载的插件 ID。元素身份由 WeakMap 认定，
+// 不读任何 DOM 属性：页面内其他脚本既不能把自造元素塞进映射，也无法靠
+// 伪造 data-* 属性冒充（同 JS 上下文内这是能做到的最强归属绑定）。
+const runtimeScriptOwners = new WeakMap<HTMLScriptElement, string>()
+
 // 已激活外部插件的响应式投影：pluginNav/pluginMessages 读取它，
 // AppSidebar 的计算属性与 locale 懒加载 merge 由此感知运行时增删
 const activeRuntimePlugins = shallowRef<readonly PluginDescriptor[]>([])
@@ -171,12 +176,23 @@ export function expectRuntimePlugin(id: string): void {
   expectedRuntimeIds.add(id)
 }
 
+/** loader 注入前把 <script> 元素与插件 ID 绑定：registerRuntime 以元素身份认定归属 */
+export function bindRuntimeScript(script: HTMLScriptElement, id: string): void {
+  runtimeScriptOwners.set(script, id)
+}
+
 function activateEntry(id: string, entry: RuntimeEntry): void {
   if (entry.active || runtimeHost === null) {
     return
   }
   for (const route of entry.descriptor.routes ?? []) {
-    entry.removeRoutes.push(runtimeHost.addRoute(stampPluginId(route, id)))
+    // 宿主 addRoute 对与既有路由（核心或其他插件）name/path 冲突的注入抛错：
+    // 逐条降级为 warn+跳过，坏路由不得顶替核心路由，也不拖垮同插件其余贡献。
+    try {
+      entry.removeRoutes.push(runtimeHost.addRoute(stampPluginId(route, id)))
+    } catch (error) {
+      console.warn(`[pluginkit] plugin "${id}" route "${route.path}" rejected:`, error)
+    }
   }
   entry.active = true
   recomputeActiveRuntimePlugins()
@@ -197,9 +213,15 @@ function deactivateEntry(entry: RuntimeEntry): void {
 /**
  * 外部插件的运行时注册回调（挂载为 window.__SUB2API_PLUGIN_REGISTER__）。
  *
- * fail-closed：descriptor 非法 / ID 未在期望集合内 / 宿主未绑定，一律
- * console.warn 后忽略（不抛错，插件脚本的失败不得中断核心应用）；
- * 同 ID 重复注册幂等（首次注册生效，后续调用为 no-op）。
+ * fail-closed：descriptor 非法 / ID 未在期望集合内 / 归属校验不过 /
+ * 宿主未绑定，一律 console.warn 后忽略（不抛错，插件脚本的失败不得中断
+ * 核心应用）；同 ID 重复注册幂等（首次注册生效，后续调用 warn 后忽略）。
+ *
+ * 归属契约：注册必须发生在 loader 注入的 <script> 同步求值期间——此时
+ * document.currentScript 即该元素，且其经 bindRuntimeScript 绑定的 ID 必须
+ * 等于 descriptor.id。异步回调（.then/setTimeout）里 currentScript 为 null，
+ * 注册一律被拒：否则恶意插件可在异步时机抢注他插件的 ID（绑定校验只对
+ * 同步调用生效的旧方案即毁于此）。
  *
  * 路由 meta.pluginId 复用 stampPluginId 强制覆写为 descriptor.id，
  * 与内建插件同一套"归属不可伪造"语义，守卫门控照常生效。
@@ -214,13 +236,14 @@ export function registerRuntime(descriptor: PluginDescriptor): void {
     console.warn(`[pluginkit] registerRuntime: "${id}" is not an expected external plugin, ignored`)
     return
   }
-  // 绑定注册到当前执行的注入脚本：loader 给每个 <script> 打了 data-plugin-id，
-  // IIFE 同步执行期间 document.currentScript 即该脚本。这样插件 A 的脚本无法
-  // 冒用插件 B 的 ID 抢注（防跨插件搭车）。currentScript 为空（非脚本注入
-  // 路径，如测试直接调用）时跳过该校验，由 expectedRuntimeIds 兜底。
-  const injectingId = (document.currentScript as HTMLScriptElement | null)?.dataset?.pluginId
-  if (injectingId !== undefined && injectingId !== id) {
-    console.warn(`[pluginkit] registerRuntime: script for "${injectingId}" tried to register "${id}", ignored`)
+  const script = document.currentScript
+  const boundId = script instanceof HTMLScriptElement ? runtimeScriptOwners.get(script) : undefined
+  if (boundId !== id) {
+    console.warn(
+      `[pluginkit] registerRuntime: "${id}" must register synchronously from its own injected script` +
+        (boundId !== undefined ? ` (caller script belongs to "${boundId}")` : ''),
+      ', ignored'
+    )
     return
   }
   if (runtimeHost === null) {
@@ -228,6 +251,8 @@ export function registerRuntime(descriptor: PluginDescriptor): void {
     return
   }
   if (runtimeEntries.has(id)) {
+    // 幂等但不静默：真实注册已在册时的再次注册值得留痕（排障线索）。
+    console.warn(`[pluginkit] registerRuntime: "${id}" already registered, duplicate ignored`)
     return
   }
   const entry: RuntimeEntry = { descriptor, active: false, removeRoutes: [] }

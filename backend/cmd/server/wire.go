@@ -398,16 +398,19 @@ func provideCleanup(
 				return nil
 			}},
 			{"PluginRuntime", func() error {
-				// 先停外部插件子进程与内建插件，再关停启停状态机（订阅与对账循环）。
+				// 先关停启停状态机（订阅与对账循环），再停外部插件子进程与内建
+				// 插件：否则 StopAll 期间到达的跨实例 toggle 会把刚停的插件复活。
+				// Close 只停后台循环，不影响 StopAll 内部对 SetEnabled 的调用
+				//（crash-loop 自禁路径）。
 				var errs []error
+				if pluginStates != nil {
+					errs = append(errs, pluginStates.Close())
+				}
 				if pluginSupervisor != nil {
 					errs = append(errs, pluginSupervisor.StopAll(ctx))
 				}
 				if pluginManager != nil {
 					errs = append(errs, pluginManager.StopAll(ctx))
-				}
-				if pluginStates != nil {
-					errs = append(errs, pluginStates.Close())
 				}
 				return errors.Join(errs...)
 			}},

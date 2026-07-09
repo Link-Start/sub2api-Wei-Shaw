@@ -8,6 +8,10 @@
  *     外部插件内联渲染组件；缺失时本插件退化为只注册 i18n，不挂路由/导航）
  *
  * descriptor 契约与 frontend/src/pluginkit/types.ts 的 PluginDescriptor 一致。
+ *
+ * 注册时机契约：必须在本脚本的同步求值期间（IIFE 顶层）调用 register——
+ * 宿主以 document.currentScript 的元素身份认定归属，异步回调（Promise/
+ * setTimeout）里的注册会被拒绝。
  */
 ;(function () {
   'use strict'

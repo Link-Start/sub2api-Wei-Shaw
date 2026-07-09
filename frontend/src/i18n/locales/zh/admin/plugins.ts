@@ -36,7 +36,8 @@ export default {
     uploadDialogTitle: '安装插件',
     uploadDropHint: '拖拽插件包到此处，或点击选择文件',
     uploadRequirements: '仅支持 .zip 插件包（需包含 manifest.json），默认大小上限 64MB',
-    uploadSecurityNote: '请仅安装可信来源的插件包：插件将以独立进程运行，并获得其清单声明的能力。',
+    uploadSecurityNote:
+      '请仅安装可信来源的插件包：插件后端以独立进程运行，并获得其清单声明的能力；若插件带有前端脚本，启用后将在所有登录用户的浏览器中无沙箱执行，可以该用户的身份访问页面与 API。',
     uploadDefaultDisabled: '安装后插件默认处于停用状态，需在列表中手动启用。',
     uploadInvalidType: '仅支持 .zip 格式的插件包',
     uploadConfirm: '上传并安装',

@@ -39,7 +39,7 @@ export default {
     uploadDropHint: 'Drag & drop a plugin package here, or click to browse',
     uploadRequirements: 'Only .zip packages (with manifest.json), default size limit 64MB',
     uploadSecurityNote:
-      'Only install plugin packages from trusted sources: plugins run as separate processes with the capabilities declared in their manifest.',
+      "Only install plugin packages from trusted sources: the plugin backend runs as a separate process with the capabilities declared in its manifest, and any bundled frontend script, once enabled, runs unsandboxed in every signed-in user's browser and can act with that user's identity.",
     uploadDefaultDisabled: 'Installed plugins start disabled; enable them from the list.',
     uploadInvalidType: 'Only .zip plugin packages are supported',
     uploadConfirm: 'Upload & Install',

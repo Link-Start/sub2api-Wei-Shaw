@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
 )
@@ -99,7 +100,15 @@ func (c *capabilityServer) start() error {
 	mux.HandleFunc("POST /v1/log", c.withAuth(c.handleLog))
 	mux.HandleFunc("GET /v1/config", c.withAuth(c.handleConfig))
 
-	c.server = &http.Server{Handler: mux}
+	// 能力调用皆为小体量短请求（KV ≤64KB / Log ≤16KB / Config 读）：
+	// 全套超时防慢连接（Slowloris）长期占用本地监听面的连接与 goroutine。
+	c.server = &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       90 * time.Second,
+	}
 	go func() {
 		if err := c.server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			c.logger.Error("plugin_capability_server_stopped", "error", err)

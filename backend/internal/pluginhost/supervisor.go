@@ -600,6 +600,8 @@ func (s *Supervisor) spawn(e *procEntry, inst *Installation) (*pluginProc, error
 
 	cmd := exec.Command(exePath)
 	cmd.Dir = inst.InstallPath
+	// 独立进程组：终止时对整组发信号，插件 fork 的孙进程一并回收。
+	setProcGroup(cmd)
 	// 最小 env 白名单：只透传插件运行所必需的中性系统变量，绝不继承
 	// 宿主的 DATABASE_URL / JWT_SECRET / Redis 凭据等机密（纵深防御——
 	// 插件的一切能力都应经宿主注入的 token 走能力面，而非读环境变量）。
@@ -790,7 +792,7 @@ func (s *Supervisor) terminateLocked(e *procEntry) error {
 
 	proc.stopping.Store(true)
 	proc.healthy.Store(false)
-	if err := proc.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := signalProc(proc, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		s.logger.Warn("plugin_sigterm_failed", "plugin", string(e.id), "error", err)
 	}
 	select {
@@ -798,7 +800,7 @@ func (s *Supervisor) terminateLocked(e *procEntry) error {
 	case <-time.After(s.terminateGrace):
 		s.logger.Warn("plugin_terminate_grace_exceeded", "plugin", string(e.id),
 			"grace", s.terminateGrace.String())
-		if err := proc.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if err := signalProc(proc, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			return fmt.Errorf("pluginhost: kill plugin %s: %w", e.id, err)
 		}
 		<-proc.done
@@ -818,10 +820,20 @@ func (s *Supervisor) terminateLocked(e *procEntry) error {
 // killProc 对未通过就绪检查的进程直接 SIGKILL 并等待回收。
 func (s *Supervisor) killProc(proc *pluginProc) {
 	proc.stopping.Store(true)
-	if err := proc.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := signalProc(proc, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		s.logger.Warn("plugin_kill_failed", "error", err)
 	}
 	<-proc.done
+}
+
+// signalProc 优先对整个进程组发信号（spawn 时 Setpgid 成组，孙进程一并
+// 收到），组信号失败或平台不支持时回退直接子进程——组已消亡时直接信号
+// 以 ErrProcessDone 收敛，与既有 caller 的容错口径一致。
+func signalProc(proc *pluginProc, sig syscall.Signal) error {
+	if err := signalProcGroup(proc.cmd.Process.Pid, sig); err == nil {
+		return nil
+	}
+	return proc.cmd.Process.Signal(sig)
 }
 
 // awaitHealthy 轮询插件 socket 的 GET /healthz 直到 200；

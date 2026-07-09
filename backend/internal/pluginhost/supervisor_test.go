@@ -18,8 +18,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -60,6 +62,9 @@ type fakePluginConfig struct {
 	Tag    string `json:"tag,omitempty"`
 	KVKey  string `json:"kv_key,omitempty"`
 	KVVal  string `json:"kv_val,omitempty"`
+	// GrandchildPIDFile 非空时假插件 fork 一个长寿孙进程（sleep）并把其 PID
+	// 写入该文件，供宿主侧断言进程组终止不留残余。
+	GrandchildPIDFile string `json:"grandchild_pid_file,omitempty"`
 }
 
 func runFakePlugin() {
@@ -99,10 +104,26 @@ func runFakePlugin() {
 		}
 	}
 
+	if cfg.GrandchildPIDFile != "" {
+		spawnGrandchild(cfg.GrandchildPIDFile)
+	}
 	fakePluginWarmUp(&cfg)
 	if err := sdk.Serve(fakePluginMux(&cfg)); err != nil {
 		fmt.Fprintln(os.Stderr, "fake plugin: serve:", err)
 		os.Exit(2)
+	}
+}
+
+// spawnGrandchild 起一个长寿孙进程并把 PID 落盘（进程组终止测试用）。
+func spawnGrandchild(pidFile string) {
+	cmd := exec.Command("sleep", "300")
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, "fake plugin: spawn grandchild:", err)
+		return
+	}
+	go func() { _ = cmd.Wait() }()
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, "fake plugin: write grandchild pid:", err)
 	}
 }
 
@@ -156,10 +177,12 @@ func fakePluginMux(cfg *fakePluginConfig) *http.ServeMux {
 	mux.HandleFunc("GET /user/echo-headers", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"authorization":       r.Header.Get("Authorization"),
-			"cookie":              r.Header.Get("Cookie"),
-			"proxy_authorization": r.Header.Get("Proxy-Authorization"),
-			"x_custom":            r.Header.Get("X-Custom"),
+			"authorization":          r.Header.Get("Authorization"),
+			"cookie":                 r.Header.Get("Cookie"),
+			"proxy_authorization":    r.Header.Get("Proxy-Authorization"),
+			"x_api_key":              r.Header.Get("X-Api-Key"),
+			"sec_websocket_protocol": r.Header.Get("Sec-WebSocket-Protocol"),
+			"x_custom":               r.Header.Get("X-Custom"),
 		})
 	})
 	return mux

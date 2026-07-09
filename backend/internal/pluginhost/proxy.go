@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pluginkit"
@@ -25,12 +26,44 @@ const (
 	proxyUserPathPrefix  = "/user"
 )
 
+// proxyResponseHeaderTimeout 是等待插件写出响应头的上限（首字节超时）：
+// 插件 accept 后不响应时释放宿主请求 goroutine，避免被慢/卡死插件无限占用。
+// 只约束响应头，SSE/长流式在头写出后不受影响。
+const proxyResponseHeaderTimeout = 60 * time.Second
+
 // strippedInboundHeaders 是转发给插件进程前必须删除的入站请求头：
 // 插件的身份来自宿主注入的 token，绝不应看到调用者的凭据。
+// X-Api-Key 是管理员一等凭据（admin_auth 中间件与 JWT 等价），同级剥离。
 var strippedInboundHeaders = []string{
 	"Authorization",
 	"Cookie",
 	"Proxy-Authorization",
+	"X-Api-Key",
+}
+
+// stripWebSocketJWT 从 Sec-WebSocket-Protocol 中剔除 jwt.<token> 条目：
+// 管理员 WS 握手经该头携带 JWT（admin_auth 中间件契约），但整头剥离会破坏
+// 插件自身的 WS 子协议协商，故只摘除凭据条目、保留其余子协议。
+func stripWebSocketJWT(h http.Header) {
+	const headerName = "Sec-Websocket-Protocol"
+	values := h.Values(headerName)
+	if len(values) == 0 {
+		return
+	}
+	kept := make([]string, 0, len(values))
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			p := strings.TrimSpace(part)
+			if p == "" || strings.HasPrefix(p, "jwt.") {
+				continue
+			}
+			kept = append(kept, p)
+		}
+	}
+	h.Del(headerName)
+	if len(kept) > 0 {
+		h.Set(headerName, strings.Join(kept, ", "))
+	}
 }
 
 // proxyConfig 是构造反代所需的宿主侧配置。
@@ -94,6 +127,7 @@ func newSocketReverseProxy(id pluginkit.ID, socketPath string, cfg proxyConfig) 
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", socketPath)
 		},
+		ResponseHeaderTimeout: proxyResponseHeaderTimeout,
 	}
 	return &httputil.ReverseProxy{
 		Transport:     transport,
@@ -110,6 +144,7 @@ func newSocketReverseProxy(id pluginkit.ID, socketPath string, cfg proxyConfig) 
 			for _, h := range strippedInboundHeaders {
 				pr.Out.Header.Del(h)
 			}
+			stripWebSocketJWT(pr.Out.Header)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header = responseheaders.FilterHeaders(resp.Header, cfg.headerFilter)

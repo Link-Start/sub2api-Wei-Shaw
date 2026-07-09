@@ -186,6 +186,19 @@ func TestPackageStoreExtractEnforcesTotalLimit(t *testing.T) {
 	require.Contains(t, err.Error(), "total uncompressed size")
 }
 
+func TestPackageStoreExtractEnforcesEntryCountLimit(t *testing.T) {
+	// 海量空条目：字节上限完全拦不住（0 字节），靠条目数上限拒绝（inode 炸弹形态）。
+	store := newTestStore(t)
+	entries := make([]zipEntry, 0, extractMaxEntries+1)
+	for i := 0; i <= extractMaxEntries; i++ {
+		entries = append(entries, zipEntry{name: fmt.Sprintf("e/%d", i)})
+	}
+	zipPath := writeTestZip(t, entries)
+	_, err := store.Extract(zipPath, "acme.hello", "1.0.0")
+	require.ErrorIs(t, err, ErrInvalidPackage)
+	require.Contains(t, err.Error(), "too many entries")
+}
+
 func TestPackageStoreRejectsOversizedArchive(t *testing.T) {
 	store := newPackageStoreWithLimit(t.TempDir(), 16)
 	zipPath := testPluginZip(t, "acme.hello", "1.0.0")

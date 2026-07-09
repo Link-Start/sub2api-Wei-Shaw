@@ -23,6 +23,9 @@ const (
 	envPackageMaxMB = "PLUGIN_PACKAGE_MAX_MB"
 	// manifestMaxBytes 是 manifest.json 的单独上限，防清单本身撑爆内存。
 	manifestMaxBytes = 1 << 20
+	// extractMaxEntries 是解包条目数上限：字节上限拦不住海量空文件/空目录
+	// 条目撑爆 inode 与目录项（条目数炸弹防线）。
+	extractMaxEntries = 10_000
 )
 
 // ErrInvalidPackage 标记插件包本身不合法（结构/清单/大小/安全校验失败），
@@ -154,6 +157,10 @@ func (s *PackageStore) Extract(zipPath string, id pluginkit.ID, version string) 
 	}
 	cleanup := func() { _ = os.RemoveAll(tmpDir) }
 
+	if len(zr.File) > extractMaxEntries {
+		cleanup()
+		return "", fmt.Errorf("%w: too many entries (%d, limit %d)", ErrInvalidPackage, len(zr.File), extractMaxEntries)
+	}
 	var total int64
 	for _, f := range zr.File {
 		if err := s.extractEntry(f, tmpDir, &total); err != nil {

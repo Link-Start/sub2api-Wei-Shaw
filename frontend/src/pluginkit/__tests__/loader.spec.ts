@@ -14,7 +14,7 @@ import { loadExternalPlugins, _resetLoaderForTest } from '../loader'
 import { pluginNav, _resetPluginsForTest, _resetRuntimeForTest, _setPluginsForTest } from '../registry'
 import type { PluginDescriptor } from '../types'
 
-const { addRoute, mergeLocaleMessage, removers } = vi.hoisted(() => {
+const { addRoute, hasRoute, getRoutes, mergeLocaleMessage, removers } = vi.hoisted(() => {
   const removerList: Array<ReturnType<typeof vi.fn>> = []
   return {
     addRoute: vi.fn(() => {
@@ -22,6 +22,8 @@ const { addRoute, mergeLocaleMessage, removers } = vi.hoisted(() => {
       removerList.push(remover)
       return remover
     }),
+    hasRoute: vi.fn((_name: unknown) => false),
+    getRoutes: vi.fn((): Array<{ path: string }> => []),
     mergeLocaleMessage: vi.fn(),
     removers: removerList
   }
@@ -29,7 +31,7 @@ const { addRoute, mergeLocaleMessage, removers } = vi.hoisted(() => {
 
 // loader 经宿主接口使用 router/i18n：mock 为轻量假件，避免拖入整棵应用模块图
 vi.mock('@/router', () => ({
-  default: { addRoute }
+  default: { addRoute, hasRoute, getRoutes }
 }))
 
 vi.mock('@/i18n', () => ({
@@ -58,10 +60,27 @@ function scriptOf(id: string): HTMLScriptElement | null {
   return document.head.querySelector<HTMLScriptElement>(`script[data-plugin-id="${id}"]`)
 }
 
+// registerFromScript 模拟"loader 注入的脚本在同步求值期间调用全局注册回调"：
+// 把 document.currentScript 指向 loader 实际创建（并绑定）的那个元素。
+function registerFromScript(scriptOwnerId: string, descriptor: PluginDescriptor): void {
+  const scriptEl = scriptOf(scriptOwnerId)
+  expect(scriptEl).not.toBeNull()
+  const currentScriptSpy = vi.spyOn(document, 'currentScript', 'get').mockReturnValue(scriptEl)
+  try {
+    window.__SUB2API_PLUGIN_REGISTER__!(descriptor)
+  } finally {
+    currentScriptSpy.mockRestore()
+  }
+}
+
 let warnSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
   addRoute.mockClear()
+  hasRoute.mockClear()
+  hasRoute.mockImplementation(() => false)
+  getRoutes.mockClear()
+  getRoutes.mockImplementation(() => [])
   mergeLocaleMessage.mockClear()
   removers.length = 0
   _setPluginsForTest([])
@@ -120,8 +139,8 @@ describe('loadExternalPlugins 注册链路', () => {
   it('脚本注册后：路由经 router.addRoute 注入（meta.pluginId 补写）、导航与文案生效', async () => {
     const pending = loadExternalPlugins([{ id: 'ext-hello', assets: EXT_ASSETS }])
 
-    // 模拟插件 IIFE 脚本体：调用全局注册回调
-    window.__SUB2API_PLUGIN_REGISTER__!(extDescriptor())
+    // 模拟插件 IIFE 脚本体：同步求值期间调用全局注册回调
+    registerFromScript('ext-hello', extDescriptor())
     scriptOf('ext-hello')!.dispatchEvent(new Event('load'))
     await pending
 
@@ -140,13 +159,87 @@ describe('loadExternalPlugins 注册链路', () => {
   it('未在清单内的 ID 无法经全局回调注册（期望集合核对，fail-closed）', async () => {
     const pending = loadExternalPlugins([{ id: 'ext-hello', assets: EXT_ASSETS }])
 
-    window.__SUB2API_PLUGIN_REGISTER__!(extDescriptor('ext-rogue'))
+    registerFromScript('ext-hello', extDescriptor('ext-rogue'))
     scriptOf('ext-hello')!.dispatchEvent(new Event('load'))
     await pending
 
     expect(addRoute).not.toHaveBeenCalled()
     expect(pluginNav('admin', new Set(['ext-rogue']))).toEqual([])
     expect(warnSpy).toHaveBeenCalled()
+  })
+
+  it('异步注册（脚本求值结束后）被拒：归属绑定只认同步求值期间的调用', async () => {
+    const pending = loadExternalPlugins([{ id: 'ext-hello', assets: EXT_ASSETS }])
+    scriptOf('ext-hello')!.dispatchEvent(new Event('load'))
+    await pending
+
+    // 脚本已求值完毕（currentScript === null）后经全局回调注册。
+    window.__SUB2API_PLUGIN_REGISTER__!(extDescriptor())
+
+    expect(addRoute).not.toHaveBeenCalled()
+    expect(pluginNav('admin', new Set(['ext-hello']))).toEqual([])
+    expect(warnSpy).toHaveBeenCalled()
+  })
+})
+
+describe('loadExternalPlugins 路由冲突防护', () => {
+  it('路由 name 与既有路由冲突：该路由被拒（warn），导航/文案贡献照常', async () => {
+    hasRoute.mockImplementation((name: unknown) => name === 'Ext-ext-hello')
+    const pending = loadExternalPlugins([{ id: 'ext-hello', assets: EXT_ASSETS }])
+
+    registerFromScript('ext-hello', extDescriptor())
+    scriptOf('ext-hello')!.dispatchEvent(new Event('load'))
+    await pending
+
+    expect(addRoute).not.toHaveBeenCalled()
+    expect(pluginNav('admin', new Set(['ext-hello']))).toHaveLength(1)
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('route'),
+      expect.any(Error)
+    )
+  })
+
+  it('路由 path 与既有路由冲突：该路由被拒，核心路由不被顶替', async () => {
+    getRoutes.mockImplementation(() => [{ path: '/admin/ext-hello' }])
+    const pending = loadExternalPlugins([{ id: 'ext-hello', assets: EXT_ASSETS }])
+
+    registerFromScript('ext-hello', extDescriptor())
+    scriptOf('ext-hello')!.dispatchEvent(new Event('load'))
+    await pending
+
+    expect(addRoute).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('route'),
+      expect.any(Error)
+    )
+  })
+
+  it('children 命名与路径参与冲突检查（相对路径按父路径展开）', async () => {
+    getRoutes.mockImplementation(() => [{ path: '/admin/ext-hello/sub' }])
+    const pending = loadExternalPlugins([{ id: 'ext-hello', assets: EXT_ASSETS }])
+
+    const descriptor = extDescriptor()
+    descriptor.routes = [
+      {
+        path: '/admin/ext-hello',
+        component: () => Promise.resolve({ default: { template: '<div />' } }),
+        children: [
+          {
+            path: 'sub',
+            component: () => Promise.resolve({ default: { template: '<div />' } })
+          }
+        ]
+      } as RouteRecordRaw
+    ]
+    registerFromScript('ext-hello', descriptor)
+    scriptOf('ext-hello')!.dispatchEvent(new Event('load'))
+    await pending
+
+    expect(addRoute).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('route'),
+      expect.any(Error)
+    )
   })
 })
 
@@ -158,7 +251,7 @@ describe('loadExternalPlugins 失败隔离', () => {
     ])
 
     scriptOf('ext-bad')!.dispatchEvent(new Event('error'))
-    window.__SUB2API_PLUGIN_REGISTER__!(extDescriptor())
+    registerFromScript('ext-hello', extDescriptor())
     scriptOf('ext-hello')!.dispatchEvent(new Event('load'))
     await pending
 
@@ -186,7 +279,7 @@ describe('loadExternalPlugins 失败隔离', () => {
 describe('loadExternalPlugins 停用与复活', () => {
   async function loadAndRegister(): Promise<void> {
     const pending = loadExternalPlugins([{ id: 'ext-hello', assets: EXT_ASSETS }])
-    window.__SUB2API_PLUGIN_REGISTER__!(extDescriptor())
+    registerFromScript('ext-hello', extDescriptor())
     scriptOf('ext-hello')!.dispatchEvent(new Event('load'))
     await pending
   }

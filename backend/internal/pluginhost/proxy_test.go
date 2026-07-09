@@ -64,6 +64,8 @@ func TestProxyStripsInboundCredentials(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer user-jwt-secret")
 	req.Header.Set("Cookie", "session=abc123")
 	req.Header.Set("Proxy-Authorization", "Basic zzz")
+	req.Header.Set("X-Api-Key", "admin-api-key-secret")
+	req.Header.Set("Sec-WebSocket-Protocol", "sub2api-admin, jwt.admin-jwt-secret")
 	req.Header.Set("X-Custom", "keep-me")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -76,7 +78,30 @@ func TestProxyStripsInboundCredentials(t *testing.T) {
 	require.Empty(t, got["authorization"], "Authorization must be stripped before reaching plugin")
 	require.Empty(t, got["cookie"], "Cookie must be stripped before reaching plugin")
 	require.Empty(t, got["proxy_authorization"], "Proxy-Authorization must be stripped")
+	require.Empty(t, got["x_api_key"], "X-Api-Key (admin credential) must be stripped")
+	require.Equal(t, "sub2api-admin", got["sec_websocket_protocol"],
+		"jwt.* subprotocol entries must be removed while other subprotocols pass through")
 	require.Equal(t, "keep-me", got["x_custom"], "non-credential headers must pass through")
+}
+
+// TestStripWebSocketJWT 覆盖子协议凭据摘除的边界：多值头、仅凭据条目、无该头。
+func TestStripWebSocketJWT(t *testing.T) {
+	h := http.Header{}
+	h.Add("Sec-WebSocket-Protocol", "graphql-ws, jwt.aaa")
+	h.Add("Sec-WebSocket-Protocol", "jwt.bbb, custom-proto")
+	stripWebSocketJWT(h)
+	require.Equal(t, "graphql-ws, custom-proto", h.Get("Sec-WebSocket-Protocol"))
+
+	h = http.Header{}
+	h.Set("Sec-WebSocket-Protocol", "jwt.only-credential")
+	stripWebSocketJWT(h)
+	_, present := h["Sec-Websocket-Protocol"]
+	require.False(t, present, "header must be dropped entirely when only jwt.* entries remain")
+
+	h = http.Header{}
+	stripWebSocketJWT(h) // 无该头时为 no-op，不新增空头
+	_, present = h["Sec-Websocket-Protocol"]
+	require.False(t, present)
 }
 
 // TestAllowlistedHostEnvExcludesSecrets 断言子进程 env 白名单放行中性系统
